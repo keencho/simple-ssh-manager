@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-utils/schema.json",
-  "productName": "Simple SSH Manager",
+  "productName": "Simple SSH Client",
   "version": "1.0.0",
   "identifier": "com.keencho.ssh-manager",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Simple SSH Manager",
+        "title": "Simple SSH Client",
         "width": 1280,
         "height": 800,
         "minWidth": 900,
