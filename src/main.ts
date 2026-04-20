@@ -1,17 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save, confirm as tauriConfirm } from "@tauri-apps/plugin-dialog";
+import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { THEMES, THEME_ORDER, THEME_GROUPS, DEFAULT_THEME, type TerminalTheme } from "./themes";
+import { THEMES, THEME_ORDER, THEME_GROUPS, DEFAULT_THEME, FONTS, DEFAULT_FONT, getFontValue, type TerminalTheme, type FontOption } from "./themes";
+import "./fonts.css";
 
 // Block browser default context menu (Inspect / Reload / etc.)
 window.addEventListener("contextmenu", (e) => e.preventDefault());
 
-// Route by window label: terminal windows load a different module
+// Route by window label: terminal-only windows skip the sidebar shell.
 const IS_TERMINAL_WINDOW = getCurrentWindow().label.startsWith("term-");
 if (IS_TERMINAL_WINDOW) {
   void import("./terminal");
 }
+// Main window loads the terminal module AFTER renderShell creates
+// #tabs and #terminals (see bootstrap block at bottom of file).
 
 // --- Types ---
 
@@ -75,13 +79,11 @@ let globalNewWindow = false;
 const ICONS = {
   search: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>`,
   refresh: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>`,
-  palette: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2a10 10 0 100 20c1.38 0 2.5-1.12 2.5-2.5 0-.61-.23-1.16-.6-1.58-.36-.42-.59-.96-.59-1.56 0-1.38 1.12-2.5 2.5-2.5H18a4 4 0 004-4 8 8 0 00-10-8z"/><circle cx="6.5" cy="12.5" r="1.1" fill="currentColor"/><circle cx="9.5" cy="7.5" r="1.1" fill="currentColor"/><circle cx="14.5" cy="7.5" r="1.1" fill="currentColor"/><circle cx="17.5" cy="11.5" r="1.1" fill="currentColor"/></svg>`,
   check: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
   plus: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>`,
   edit: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`,
   trash: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14"/></svg>`,
   close: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>`,
-  key: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>`,
   jump: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>`,
   folder: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>`,
   chevronDown: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>`,
@@ -97,9 +99,69 @@ const ICONS = {
   file: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>`,
   folderOpen: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>`,
   arrowUp: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`,
+  newWindow: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><path d="M10 14L21 3"/></svg>`,
+  settings: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`,
 };
 
 // --- Helpers ---
+
+const GENERIC_FONT_FAMILIES = new Set([
+  "monospace", "sans-serif", "serif", "ui-monospace", "ui-sans-serif",
+  "ui-serif", "system-ui", "cursive", "fantasy", "SFMono-Regular",
+]);
+
+function parseFontStack(value: string): string[] {
+  return value.split(",").map(s => s.trim().replace(/^["']|["']$/g, ""));
+}
+
+// Width-comparison font detection. `document.fonts.check()` gives false
+// positives in webview2 (returns true even for uninstalled fonts). We render
+// a test string in a hidden span with each generic fallback alone, then with
+// the candidate font in front. If the width differs from at least one
+// fallback, the font is installed.
+const FONT_PROBE_STRING = "mmMwWLlIi00O0!@#$%^&*()_+{}[]|:;<>,.?/~`";
+const FONT_PROBE_GENERICS = ["monospace", "sans-serif", "serif"];
+let _fontProbeSpan: HTMLSpanElement | null = null;
+const _fontProbeBaseline = new Map<string, number>();
+const _fontInstallCache = new Map<string, boolean>();
+
+function measureFontWidth(family: string): number {
+  if (!_fontProbeSpan) {
+    const s = document.createElement("span");
+    s.style.cssText = "position:absolute;left:-9999px;top:-9999px;visibility:hidden;font-size:72px;white-space:nowrap;";
+    s.textContent = FONT_PROBE_STRING;
+    document.body.appendChild(s);
+    _fontProbeSpan = s;
+  }
+  _fontProbeSpan.style.fontFamily = family;
+  return _fontProbeSpan.getBoundingClientRect().width;
+}
+
+function isFontInstalled(name: string): boolean {
+  if (_fontInstallCache.has(name)) return _fontInstallCache.get(name)!;
+  for (const g of FONT_PROBE_GENERICS) {
+    if (!_fontProbeBaseline.has(g)) _fontProbeBaseline.set(g, measureFontWidth(g));
+    const baseline = _fontProbeBaseline.get(g)!;
+    const actual = measureFontWidth(`"${name}", ${g}`);
+    if (Math.abs(actual - baseline) > 0.5) {
+      _fontInstallCache.set(name, true);
+      return true;
+    }
+  }
+  _fontInstallCache.set(name, false);
+  return false;
+}
+
+function resolveActualFont(value: string): { primary: string; actual: string | null } {
+  const names = parseFontStack(value);
+  const specifics = names.filter(n => !GENERIC_FONT_FAMILIES.has(n));
+  const primary = specifics[0] ?? names[0];
+  for (const n of names) {
+    if (GENERIC_FONT_FAMILIES.has(n)) continue;
+    if (isFontInstalled(n)) return { primary, actual: n };
+  }
+  return { primary, actual: null };
+}
 
 function escapeHtml(str: string): string {
   const div = document.createElement("div");
@@ -300,6 +362,21 @@ async function addFolder() {
     renderStats();
   } catch (e) {
     customAlert("폴더 생성 실패: " + e);
+  }
+}
+
+async function deleteFolder(id: string) {
+  const folder = data.folders.find((f) => f.id === id);
+  if (!folder) return;
+  const ok = await customConfirm(`"${folder.name}" 폴더를 삭제할까요?\n(세션은 미분류로 이동됩니다)`, "폴더 삭제");
+  if (!ok) return;
+  try {
+    data = await invoke<SessionsData>("delete_folder", { id });
+    collapsedFolders.delete(id);
+    renderTree();
+    renderStats();
+  } catch (e) {
+    customAlert("폴더 삭제 실패: " + e);
   }
 }
 
@@ -540,15 +617,104 @@ function initDnD() {
   });
 }
 
+// --- Context menu ---
+
+interface CtxMenuItem {
+  label: string;
+  icon?: string;
+  action: () => void;
+  danger?: boolean;
+}
+
+function showContextMenu(x: number, y: number, items: CtxMenuItem[]) {
+  document.querySelectorAll(".ctx-menu").forEach((el) => el.remove());
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+  menu.innerHTML = items.map((it, i) =>
+    it.label === "-"
+      ? `<div class="ctx-sep"></div>`
+      : `<div class="ctx-item ${it.danger ? "ctx-item-danger" : ""}" data-idx="${i}">${it.icon || ""}<span>${escapeHtml(it.label)}</span></div>`
+  ).join("");
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+  menu.style.visibility = "hidden";
+  document.body.appendChild(menu);
+
+  const rect = menu.getBoundingClientRect();
+  let adjX = x, adjY = y;
+  if (rect.right > window.innerWidth) adjX = Math.max(4, window.innerWidth - rect.width - 4);
+  if (rect.bottom > window.innerHeight) adjY = Math.max(4, window.innerHeight - rect.height - 4);
+  menu.style.left = adjX + "px";
+  menu.style.top = adjY + "px";
+  menu.style.visibility = "";
+
+  const close = () => {
+    menu.remove();
+    document.removeEventListener("mousedown", outside, true);
+    document.removeEventListener("keydown", onKey);
+    window.removeEventListener("blur", close);
+  };
+  const outside = (ev: MouseEvent) => { if (!menu.contains(ev.target as Node)) close(); };
+  const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") close(); };
+
+  menu.addEventListener("click", (ev) => {
+    const el = (ev.target as HTMLElement).closest(".ctx-item") as HTMLElement | null;
+    if (!el) return;
+    const idx = Number(el.dataset.idx);
+    close();
+    items[idx]?.action();
+  });
+  setTimeout(() => document.addEventListener("mousedown", outside, true), 0);
+  document.addEventListener("keydown", onKey);
+  window.addEventListener("blur", close);
+}
+
+// --- Sidebar resize ---
+
+function initSidebarResizer() {
+  const resizer = document.getElementById("sidebar-resizer");
+  const sidebar = document.getElementById("sidebar");
+  if (!resizer || !sidebar) return;
+
+  let dragging = false;
+  let startX = 0;
+  let startW = 0;
+
+  resizer.addEventListener("mousedown", (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startW = sidebar.offsetWidth;
+    document.body.classList.add("sidebar-resizing");
+    e.preventDefault();
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const w = Math.max(240, Math.min(640, startW + (e.clientX - startX)));
+    sidebar.style.width = w + "px";
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("sidebar-resizing");
+    localStorage.setItem("sidebar-w", String(sidebar.offsetWidth));
+  });
+}
+
 // --- Modal ---
 
-async function openThemePicker() {
-  const currentName: string = (await invoke<string | null>("get_terminal_theme")) ?? DEFAULT_THEME;
+async function openSettings() {
+  const currentThemeName: string = (await invoke<string | null>("get_terminal_theme")) ?? DEFAULT_THEME;
+  const currentFontName: string = (await invoke<string | null>("get_terminal_font")) ?? DEFAULT_FONT;
+  const currentLogDir: string = await invoke<string>("get_log_dir");
+  const currentSshVerbose: boolean = await invoke<boolean>("get_ssh_verbose");
+  const currentDataPath: string = await invoke<string>("get_data_file_path");
 
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
 
-  let selectedName = currentName;
+  let selectedName = currentThemeName;
   let rankMap = new Map<string, number>();
   THEME_ORDER.forEach((n, i) => rankMap.set(n, i + 1));
 
@@ -587,22 +753,287 @@ async function openThemePicker() {
     </div>
   `;
 
+  // Group fonts by availability: bundled / system-installed / missing.
+  // Bundled are shipped via @fontsource — always available offline.
+  // Installed detection uses width measurement (reliable in webview2).
+  const bundledFonts: FontOption[] = [];
+  const installedFonts: FontOption[] = [];
+  const missingFonts: FontOption[] = [];
+  for (const f of FONTS) {
+    if (f.bundled) { bundledFonts.push(f); continue; }
+    const primary = parseFontStack(f.value).find(n => !GENERIC_FONT_FAMILIES.has(n));
+    if (primary && isFontInstalled(primary)) installedFonts.push(f);
+    else missingFonts.push(f);
+  }
+  const renderOption = (f: FontOption) =>
+    `<option value="${escapeHtml(f.label)}" ${f.label === currentFontName ? "selected" : ""}>${escapeHtml(f.label)}</option>`;
+  const fontOptions = [
+    bundledFonts.length  ? `<optgroup label="✓ 번들됨 (항상 사용 가능)">${bundledFonts.map(renderOption).join("")}</optgroup>` : "",
+    installedFonts.length ? `<optgroup label="✓ 시스템에 설치됨">${installedFonts.map(renderOption).join("")}</optgroup>` : "",
+    missingFonts.length  ? `<optgroup label="⚠ 미설치">${missingFonts.map(renderOption).join("")}</optgroup>` : "",
+  ].filter(Boolean).join("");
+
   overlay.innerHTML = `
-    <div class="modal modal-theme">
-      <button class="modal-close" id="theme-close">${ICONS.close}</button>
-      <div class="modal-title">터미널 테마</div>
-      <div class="modal-subtitle">랭킹 순 · 선택하면 열려있는 모든 터미널 창에 즉시 적용됩니다.</div>
-      <div class="theme-groups">
-        ${THEME_GROUPS.map(renderGroup).join("")}
+    <div class="modal modal-settings">
+      <header class="settings-header">
+        <div class="settings-title">설정</div>
+        <button class="settings-close" title="닫기">${ICONS.close}</button>
+      </header>
+      <div class="settings-body">
+        <aside class="settings-nav">
+          <button class="settings-nav-item active" data-section="font">폰트</button>
+          <button class="settings-nav-item" data-section="theme">테마</button>
+          <button class="settings-nav-item" data-section="log">로그</button>
+          <button class="settings-nav-item" data-section="data">데이터</button>
+        </aside>
+        <div class="settings-content">
+          <section class="settings-panel" data-section="font">
+            <div class="settings-panel-title">폰트</div>
+            <div class="settings-panel-subtitle">선택하면 열려있는 모든 터미널에 즉시 적용됩니다. 설치되지 않은 폰트는 대체 폰트로 렌더됩니다.</div>
+            <select class="settings-select" id="settings-font">${fontOptions}</select>
+            <div class="settings-font-status" id="settings-font-status"></div>
+            <pre class="settings-font-sample" id="settings-font-sample">[ec2-user@host ~]$ ls -la | grep foo
+drwxr-xr-x  user  1024  2026-04-20  documents/
+-rw-r--r--  user  2048  2026-04-20  readme.md
+The quick brown fox jumps over 0123456789 ({[]}) "\`~$"</pre>
+          </section>
+          <section class="settings-panel" data-section="theme" hidden>
+            <div class="settings-panel-title">터미널 테마</div>
+            <div class="settings-panel-subtitle">랭킹 순 · 선택하면 열려있는 모든 터미널에 즉시 적용됩니다.</div>
+            <div class="theme-groups">
+              ${THEME_GROUPS.map(renderGroup).join("")}
+            </div>
+          </section>
+          <section class="settings-panel" data-section="log" hidden>
+            <div class="settings-panel-title">로그</div>
+            <div class="settings-panel-subtitle">앱 동작 로그와 (verbose 모드) SSH 접속 디버그 로그가 저장되는 위치입니다.</div>
+
+            <div class="settings-row-label">로그 폴더</div>
+            <div class="settings-path-row">
+              <code class="settings-path" id="settings-log-path">${escapeHtml(currentLogDir)}</code>
+            </div>
+            <div class="settings-btn-row">
+              <button class="btn-secondary-sm" id="settings-log-open-folder">${ICONS.folderOpen}<span>폴더 열기</span></button>
+              <button class="btn-secondary-sm" id="settings-log-change-dir">${ICONS.edit}<span>경로 변경</span></button>
+              <button class="btn-secondary-sm" id="settings-log-reset-dir">기본값</button>
+              <button class="btn-secondary-sm" id="settings-log-clear" style="margin-left:auto">${ICONS.trash}<span>전체 삭제</span></button>
+            </div>
+
+            <div class="settings-divider"></div>
+
+            <div class="settings-row-label">SSH Verbose 디버그 로그</div>
+            <label class="settings-toggle-row">
+              <input type="checkbox" id="settings-ssh-verbose" ${currentSshVerbose ? "checked" : ""}>
+              <span class="toggle-mini-track"><span class="toggle-mini-thumb"></span></span>
+              <span class="settings-toggle-text">연결 시 ssh에 <code>-vv</code> + <code>-E {로그폴더}/ssh-*.log</code> 추가</span>
+            </label>
+            <div class="settings-panel-hint">Permission denied / 알고리즘 불일치 등 접속 실패 원인을 파악할 때 켜세요. 세션마다 별도 파일이 생성됩니다.</div>
+          </section>
+          <section class="settings-panel" data-section="data" hidden>
+            <div class="settings-panel-title">데이터</div>
+            <div class="settings-panel-subtitle">세션과 폴더 정보는 JSON 파일 하나로 관리됩니다. 백업, 다른 기기로 이전, 경로 변경이 가능합니다.</div>
+
+            <div class="settings-row-label">현재 데이터 파일</div>
+            <div class="settings-path-row">
+              <code class="settings-path" id="settings-data-path">${escapeHtml(currentDataPath)}</code>
+            </div>
+            <div class="settings-btn-row">
+              <button class="btn-secondary-sm" id="settings-data-open-folder">${ICONS.folderOpen}<span>폴더 열기</span></button>
+              <button class="btn-secondary-sm" id="settings-data-change">${ICONS.edit}<span>다른 파일 사용</span></button>
+              <button class="btn-secondary-sm" id="settings-data-reset">기본값</button>
+            </div>
+            <div class="settings-panel-hint">다른 파일을 지정하면 이후 저장/불러오기가 그 파일로 갑니다. JSON 양식이 맞지 않으면 지정되지 않습니다.</div>
+
+            <div class="settings-divider"></div>
+
+            <div class="settings-row-label">내보내기 / 가져오기</div>
+            <div class="settings-btn-row">
+              <button class="btn-secondary-sm" id="settings-data-export">${ICONS.download}<span>내보내기 (JSON)</span></button>
+              <button class="btn-secondary-sm" id="settings-data-import">${ICONS.upload}<span>가져오기 (JSON)</span></button>
+            </div>
+            <div class="settings-panel-hint">내보내기는 현재 데이터의 복사본을 저장합니다. 가져오기는 현재 세션/폴더를 <strong>모두 대체</strong>합니다.</div>
+          </section>
+        </div>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
 
-  const close = () => overlay.remove();
-  overlay.querySelector("#theme-close")!.addEventListener("click", close);
+  const close = () => {
+    document.getElementById("settings-font-cdn-link")?.remove();
+    overlay.remove();
+  };
+  overlay.querySelector(".settings-close")!.addEventListener("click", close);
   overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
 
+  // Nav switching
+  overlay.querySelectorAll<HTMLElement>(".settings-nav-item").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const target = btn.dataset.section;
+      if (!target) return;
+      overlay.querySelectorAll<HTMLElement>(".settings-nav-item").forEach((b) =>
+        b.classList.toggle("active", b.dataset.section === target));
+      overlay.querySelectorAll<HTMLElement>(".settings-panel").forEach((p) => {
+        if (p.dataset.section === target) p.removeAttribute("hidden");
+        else p.setAttribute("hidden", "");
+      });
+    });
+  });
+
+  // Font section
+  const fontSelect = overlay.querySelector("#settings-font") as HTMLSelectElement;
+  const fontSample = overlay.querySelector("#settings-font-sample") as HTMLElement;
+  const fontStatus = overlay.querySelector("#settings-font-status") as HTMLElement;
+
+  // Single-slot CDN preview loader. Loads Google Fonts CSS for missing fonts
+  // on-demand so user can see them. Cleared when the modal closes or when
+  // the user switches to a bundled/installed font.
+  const setCdnPreview = (url: string | null) => {
+    const existing = document.getElementById("settings-font-cdn-link") as HTMLLinkElement | null;
+    if (!url) { existing?.remove(); return; }
+    if (existing && existing.href === url) return;
+    existing?.remove();
+    const link = document.createElement("link");
+    link.id = "settings-font-cdn-link";
+    link.rel = "stylesheet";
+    link.href = url;
+    document.head.appendChild(link);
+  };
+
+  const updateFontUI = async (label: string) => {
+    const entry = FONTS.find(f => f.label === label);
+    const value = entry?.value ?? getFontValue(label);
+    const primary = parseFontStack(value).find(n => !GENERIC_FONT_FAMILIES.has(n)) ?? label;
+    const installed = entry?.bundled || (primary && isFontInstalled(primary));
+
+    // Manage CDN preview: only for non-bundled + not-installed + has cdnUrl.
+    if (!entry?.bundled && !installed && entry?.cdnUrl) {
+      setCdnPreview(entry.cdnUrl);
+      try { await (document as any).fonts.load(`12px "${primary}"`); } catch {}
+    } else {
+      setCdnPreview(null);
+    }
+
+    fontSample.style.fontFamily = value;
+
+    // Re-check after potential CDN load to update badge
+    const r = resolveActualFont(value);
+    const nowAvailable = entry?.bundled || (r.actual === r.primary);
+    const isCdnPreview = !entry?.bundled && !installed && !!entry?.cdnUrl;
+
+    let cls: string, text: string;
+    if (entry?.bundled) {
+      cls = "installed";
+      text = `✓ 번들됨 — "${r.primary}" (항상 사용 가능)`;
+    } else if (nowAvailable && !isCdnPreview) {
+      cls = "installed";
+      text = `✓ 시스템 설치됨 — "${r.primary}"`;
+    } else if (isCdnPreview) {
+      cls = "cdn";
+      text = `🌐 온라인 프리뷰 (Google Fonts) — 오프라인 사용하려면 설치 필요`;
+    } else if (r.actual) {
+      cls = "missing";
+      text = `⚠ "${r.primary}" 미설치 — 실제 렌더: "${r.actual}"`;
+    } else {
+      cls = "missing";
+      text = `⚠ "${r.primary}" 미설치 — 시스템 기본 monospace로 렌더`;
+    }
+
+    const installBtn = entry?.installUrl && !entry.bundled && (!installed || isCdnPreview)
+      ? `<button class="settings-font-install-btn" data-url="${escapeHtml(entry.installUrl)}">공식 다운로드 ↗</button>`
+      : "";
+    fontStatus.className = `settings-font-status ${cls}`;
+    fontStatus.innerHTML = `<span class="settings-font-status-text">${escapeHtml(text)}</span>${installBtn}`;
+  };
+  void updateFontUI(currentFontName);
+  fontSelect.addEventListener("change", async () => {
+    const label = fontSelect.value;
+    await updateFontUI(label);
+    try { await invoke("set_terminal_font", { name: label }); }
+    catch (err) { customAlert("폰트 적용 실패: " + err); }
+  });
+  fontStatus.addEventListener("click", async (e) => {
+    const btn = (e.target as HTMLElement).closest(".settings-font-install-btn") as HTMLButtonElement | null;
+    if (!btn?.dataset.url) return;
+    try { await openExternal(btn.dataset.url); } catch (err) { customAlert("링크 열기 실패: " + err); }
+  });
+
+  // Log section
+  const logPathEl = overlay.querySelector("#settings-log-path") as HTMLElement;
+  overlay.querySelector("#settings-log-open-folder")!.addEventListener("click", async () => {
+    try { await invoke("open_path_in_os", { path: logPathEl.textContent || "" }); }
+    catch (err) { customAlert("폴더 열기 실패: " + err); }
+  });
+  overlay.querySelector("#settings-log-change-dir")!.addEventListener("click", async () => {
+    try {
+      const picked = await open({ directory: true, multiple: false, title: "로그 폴더 선택" });
+      if (typeof picked !== "string") return;
+      const resolved = await invoke<string>("set_log_dir", { path: picked });
+      logPathEl.textContent = resolved;
+    } catch (err) { customAlert("경로 변경 실패: " + err); }
+  });
+  overlay.querySelector("#settings-log-reset-dir")!.addEventListener("click", async () => {
+    try {
+      const resolved = await invoke<string>("set_log_dir", { path: null });
+      logPathEl.textContent = resolved;
+    } catch (err) { customAlert("기본값 설정 실패: " + err); }
+  });
+  overlay.querySelector("#settings-log-clear")!.addEventListener("click", async () => {
+    if (!await customConfirm(`로그 폴더의 모든 *.log 파일을 삭제합니다.\n${logPathEl.textContent}`, "로그 삭제")) return;
+    try {
+      const n = await invoke<number>("clear_logs");
+      await customAlert(`${n}개 로그 파일을 삭제했습니다.`);
+    } catch (err) { customAlert("로그 삭제 실패: " + err); }
+  });
+  overlay.querySelector("#settings-ssh-verbose")!.addEventListener("change", async (e) => {
+    const checked = (e.target as HTMLInputElement).checked;
+    try { await invoke("set_ssh_verbose", { enabled: checked }); }
+    catch (err) { customAlert("설정 실패: " + err); }
+  });
+
+  // Data section
+  const dataPathEl = overlay.querySelector("#settings-data-path") as HTMLElement;
+  const parentOf = (p: string) => p.replace(/[\\\/][^\\\/]+$/, "") || p;
+  overlay.querySelector("#settings-data-open-folder")!.addEventListener("click", async () => {
+    try { await invoke("open_path_in_os", { path: parentOf(dataPathEl.textContent || "") }); }
+    catch (err) { customAlert("폴더 열기 실패: " + err); }
+  });
+  overlay.querySelector("#settings-data-change")!.addEventListener("click", async () => {
+    try {
+      const picked = await open({ multiple: false, title: "데이터 JSON 파일 선택", filters: [{ name: "JSON", extensions: ["json"] }] });
+      if (typeof picked !== "string") return;
+      const resolved = await invoke<string>("set_data_file_path", { path: picked });
+      dataPathEl.textContent = resolved;
+      await loadData();
+    } catch (err) { customAlert("경로 변경 실패: " + err); }
+  });
+  overlay.querySelector("#settings-data-reset")!.addEventListener("click", async () => {
+    try {
+      const resolved = await invoke<string>("set_data_file_path", { path: null });
+      dataPathEl.textContent = resolved;
+      await loadData();
+    } catch (err) { customAlert("기본값 설정 실패: " + err); }
+  });
+  overlay.querySelector("#settings-data-export")!.addEventListener("click", async () => {
+    try {
+      const picked = await save({ defaultPath: "simple-ssh-client-sessions.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+      if (typeof picked !== "string") return;
+      await invoke("export_sessions_to", { targetPath: picked });
+      await customAlert(`내보내기 완료\n${picked}`);
+    } catch (err) { customAlert("내보내기 실패: " + err); }
+  });
+  overlay.querySelector("#settings-data-import")!.addEventListener("click", async () => {
+    try {
+      const picked = await open({ multiple: false, title: "가져올 JSON 파일 선택", filters: [{ name: "JSON", extensions: ["json"] }] });
+      if (typeof picked !== "string") return;
+      if (!await customConfirm("현재 세션/폴더가 모두 대체됩니다. 계속할까요?", "가져오기")) return;
+      await invoke("import_sessions_from", { sourcePath: picked });
+      await loadData();
+      await customAlert("가져오기 완료. 사이드바가 새로고침되었습니다.");
+    } catch (err) { customAlert("가져오기 실패: " + err); }
+  });
+
+  // Theme section
   const root = overlay.querySelector(".theme-groups") as HTMLElement;
   root.addEventListener("click", async (e) => {
     const card = (e.target as HTMLElement).closest(".theme-card") as HTMLElement | null;
@@ -610,7 +1041,6 @@ async function openThemePicker() {
     const name = card.dataset.themeName!;
     if (name === selectedName) return;
     selectedName = name;
-    // Update selected state across all cards
     root.querySelectorAll(".theme-card").forEach(el => {
       const cardName = (el as HTMLElement).dataset.themeName!;
       const isActive = cardName === name;
@@ -1252,26 +1682,19 @@ function renderStats() {
 }
 
 function renderSessionRow(s: SshSession): string {
-  const jumpInfo = s.jump_host ? `<span class="row-tag row-tag-jump">${ICONS.jump} via ${escapeHtml(s.jump_host.host)}</span>` : "";
-  const keyInfo = s.key_file ? `<span class="row-tag row-tag-key">${ICONS.key} ${escapeHtml(getKeyFileName(s.key_file))}</span>` : "";
+  const jumpTitle = s.jump_host ? `via ${s.jump_host.host}` : "";
+  const jumpBadge = s.jump_host ? `<span class="row-meta-ic row-meta-jump" title="${escapeHtml(jumpTitle)}">${ICONS.jump}</span>` : "";
 
   return `
-    <div class="tree-row tree-session" data-session-id="${s.id}">
+    <div class="tree-session" data-session-id="${s.id}">
       <div class="drag-handle">${ICONS.drag}</div>
       <div class="row-icon">${ICONS.server}</div>
-      <div class="row-name">${escapeHtml(s.name)}</div>
-      <div class="row-connection">${escapeHtml(s.user)}@${escapeHtml(s.host)}:${s.port}</div>
-      <div class="row-tags">${keyInfo}${jumpInfo}</div>
-      <div class="row-actions">
-        <label class="toggle-mini" title="새 창에서 열기">
-          <input type="checkbox" data-newwin-for="${s.id}" />
-          <span class="toggle-mini-track"><span class="toggle-mini-thumb"></span></span>
-        </label>
-        <button class="btn-sm btn-connect-sm" data-action="connect" data-id="${s.id}" title="연결">${ICONS.terminal}</button>
-        <button class="btn-sm btn-sftp-sm" data-action="sftp" data-id="${s.id}" title="파일 관리">${ICONS.fileManager}</button>
-        <button class="btn-sm btn-copy-sm" data-action="copy" data-id="${s.id}" title="복사">${ICONS.copy}</button>
-        <button class="btn-sm btn-edit-sm" data-action="edit" data-id="${s.id}" title="편집">${ICONS.edit}</button>
-        <button class="btn-sm btn-delete-sm" data-action="delete" data-id="${s.id}" title="삭제">${ICONS.trash}</button>
+      <div class="row-body">
+        <div class="row-title-line">
+          <span class="row-name">${escapeHtml(s.name)}</span>
+          ${jumpBadge}
+        </div>
+        <div class="row-connection">${escapeHtml(s.user)}@${escapeHtml(s.host)}:${s.port}</div>
       </div>
     </div>
   `;
@@ -1312,7 +1735,10 @@ function renderTree() {
             <div class="drag-handle">${ICONS.drag}</div>
             <span class="folder-chevron">${collapsedFolders.has("__root__") ? ICONS.chevronRight : ICONS.chevronDown}</span>
             <span class="folder-name folder-name-dim">미분류</span>
-            <span class="folder-count">${rootSessions.length}</span>
+            <span class="folder-count">(${rootSessions.length})</span>
+            <div class="folder-actions">
+              <button class="btn-sm btn-add-in-folder" data-action="add-in-folder" data-folder-id="" title="세션 추가">${ICONS.plus}</button>
+            </div>
           </div>
           ${collapsedFolders.has("__root__") ? "" : `<div class="tree-children">${rootSessions.map(renderSessionRow).join("")}</div>`}
         </div>
@@ -1332,7 +1758,7 @@ function renderTree() {
           <span class="folder-chevron">${chevron}</span>
           <span class="folder-icon">${ICONS.folder}</span>
           <span class="folder-name">${escapeHtml(folder.name)}</span>
-          <span class="folder-count">${sessions.length}</span>
+          <span class="folder-count">(${sessions.length})</span>
           <div class="folder-actions">
             <button class="btn-sm btn-add-in-folder" data-action="add-in-folder" data-folder-id="${folder.id}" title="세션 추가">${ICONS.plus}</button>
             <button class="btn-sm btn-edit-sm" data-action="edit-folder" data-folder-id="${folder.id}" title="폴더 편집">${ICONS.edit}</button>
@@ -1353,36 +1779,51 @@ function renderTree() {
 
 function renderShell() {
   const app = document.getElementById("app")!;
+  const savedWidth = parseInt(localStorage.getItem("sidebar-w") || "280");
+  const sidebarWidth = Math.max(220, Math.min(500, savedWidth));
+
   app.innerHTML = `
-    <div class="container">
-      <header>
-        <div class="toolbar">
+    <div id="app-layout">
+      <aside id="sidebar" style="width: ${sidebarWidth}px">
+        <div class="sidebar-top">
           <div class="search-wrap">
             <span class="search-icon">${ICONS.search}</span>
             <input type="text" id="search" placeholder="검색..." />
           </div>
-          <button class="btn-action" id="add-session-btn">${ICONS.plus} 세션</button>
-          <button class="btn-action" id="add-folder-btn">${ICONS.folder} 폴더</button>
-          <label class="toggle-newwin" title="새 창에서 열기">
-            <input type="checkbox" id="global-newwin" />
-            <span class="toggle-track"><span class="toggle-thumb"></span></span>
-            <span class="toggle-text-label">New Window</span>
-          </label>
-          <button class="btn-ghost" id="theme-btn" title="터미널 테마">${ICONS.palette}</button>
-          <button class="btn-ghost" id="refresh-btn" title="새로고침">${ICONS.refresh}</button>
         </div>
-        <div class="stats" id="stats"></div>
-      </header>
-      <div id="content-area" class="tree-list"></div>
+        <div id="content-area" class="tree-list"></div>
+        <div class="sidebar-bottom">
+          <div class="sidebar-actions">
+            <button class="btn-secondary-sm" id="add-session-btn">${ICONS.plus}<span>세션</span></button>
+            <button class="btn-secondary-sm" id="add-folder-btn">${ICONS.folder}<span>폴더</span></button>
+            <div class="sidebar-actions-spacer"></div>
+            <label class="toggle-global-nw" title="연결 시 기본적으로 새 창에서 열기">
+              <input type="checkbox" id="global-newwin" />
+              <span class="toggle-mini-track"><span class="toggle-mini-thumb"></span></span>
+              <span class="toggle-label-text">새 창</span>
+            </label>
+            <button class="btn-ghost-sm" id="settings-btn" title="설정">${ICONS.settings}</button>
+            <button class="btn-ghost-sm" id="refresh-btn" title="새로고침">${ICONS.refresh}</button>
+          </div>
+          <div class="stats" id="stats"></div>
+        </div>
+      </aside>
+      <div id="sidebar-resizer"></div>
+      <div id="terminal-area">
+        <div id="tabs"></div>
+        <div id="terminals"></div>
+      </div>
     </div>
   `;
+
+  initSidebarResizer();
 
   const searchInput = document.getElementById("search") as HTMLInputElement;
   searchInput.addEventListener("input", () => { searchQuery = searchInput.value; renderTree(); });
 
   document.getElementById("add-session-btn")!.addEventListener("click", () => openModal());
   document.getElementById("add-folder-btn")!.addEventListener("click", addFolder);
-  document.getElementById("theme-btn")!.addEventListener("click", () => void openThemePicker());
+  document.getElementById("settings-btn")!.addEventListener("click", () => void openSettings());
   document.getElementById("refresh-btn")!.addEventListener("click", loadData);
 
   (document.getElementById("global-newwin") as HTMLInputElement).addEventListener("change", (e) => {
@@ -1408,26 +1849,10 @@ function renderShell() {
     e.stopPropagation();
 
     const action = actionEl.dataset.action;
-    if (action === "connect") {
-      const id = actionEl.dataset.id!;
-      const perSession = document.querySelector(`input[data-newwin-for="${id}"]`) as HTMLInputElement | null;
-      connectSession(id, perSession?.checked ?? globalNewWindow);
-    } else if (action === "edit") {
-      const s = data.sessions.find((s) => s.id === actionEl.dataset.id);
-      if (s) openModal(s);
-    } else if (action === "copy") {
-      try {
-        data = await invoke<SessionsData>("copy_session", { id: actionEl.dataset.id });
-        renderTree(); renderStats();
-      } catch (e) { customAlert("복사 실패: " + e); }
-    } else if (action === "delete") {
-      deleteSession(actionEl.dataset.id!);
-    } else if (action === "edit-folder") {
+    if (action === "edit-folder") {
       editFolder(actionEl.dataset.folderId!);
     } else if (action === "add-in-folder") {
       openModal(undefined, actionEl.dataset.folderId!);
-    } else if (action === "sftp") {
-      openSftpPanel(actionEl.dataset.id!);
     }
   });
 
@@ -1437,9 +1862,45 @@ function renderShell() {
     if ((e.target as HTMLElement).closest(".drag-handle")) return;
     const row = (e.target as HTMLElement).closest("[data-session-id]") as HTMLElement | null;
     if (!row) return;
-    const sid = row.dataset.sessionId!;
-    const perSession = document.querySelector(`input[data-newwin-for="${sid}"]`) as HTMLInputElement | null;
-    connectSession(sid, perSession?.checked ?? globalNewWindow);
+    connectSession(row.dataset.sessionId!, globalNewWindow);
+  });
+
+  // Right-click context menu
+  contentArea.addEventListener("contextmenu", (e) => {
+    const sessionEl = (e.target as HTMLElement).closest("[data-session-id]") as HTMLElement | null;
+    if (sessionEl) {
+      e.preventDefault();
+      const sid = sessionEl.dataset.sessionId!;
+      const s = data.sessions.find((x) => x.id === sid);
+      if (!s) return;
+      showContextMenu(e.clientX, e.clientY, [
+        { label: "연결", icon: ICONS.terminal, action: () => connectSession(sid, globalNewWindow) },
+        { label: "새 창에서 연결", icon: ICONS.newWindow, action: () => connectSession(sid, true) },
+        { label: "SFTP 열기", icon: ICONS.fileManager, action: () => openSftpPanel(sid) },
+        { label: "-", action: () => {} },
+        { label: "편집", icon: ICONS.edit, action: () => openModal(s) },
+        { label: "복사", icon: ICONS.copy, action: async () => {
+          try {
+            data = await invoke<SessionsData>("copy_session", { id: sid });
+            renderTree(); renderStats();
+          } catch (err) { customAlert("복사 실패: " + err); }
+        }},
+        { label: "-", action: () => {} },
+        { label: "삭제", icon: ICONS.trash, action: () => deleteSession(sid), danger: true },
+      ]);
+      return;
+    }
+    const folderEl = (e.target as HTMLElement).closest("[data-folder-id]") as HTMLElement | null;
+    if (folderEl && folderEl.dataset.folderId !== "__root__") {
+      e.preventDefault();
+      const fid = folderEl.dataset.folderId!;
+      showContextMenu(e.clientX, e.clientY, [
+        { label: "세션 추가", icon: ICONS.plus, action: () => openModal(undefined, fid) },
+        { label: "폴더 편집", icon: ICONS.edit, action: () => editFolder(fid) },
+        { label: "-", action: () => {} },
+        { label: "폴더 삭제", icon: ICONS.trash, action: () => deleteFolder(fid), danger: true },
+      ]);
+    }
   });
 
   initDnD();
@@ -1450,5 +1911,8 @@ if (!IS_TERMINAL_WINDOW) {
   (async () => {
     renderShell();
     await loadData();
+    // Load terminal module after the DOM is ready so it can mount
+    // into #tabs / #terminals created by renderShell.
+    await import("./terminal");
   })();
 }

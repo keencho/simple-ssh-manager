@@ -17,14 +17,14 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
+  overflow: hidden;
+}
+
+body.terminal-window {
   background: var(--bg);
   color: var(--fg);
   font-family: "Segoe UI", system-ui, sans-serif;
   font-size: 13px;
-  overflow: hidden;
-}
-
-body {
   display: flex;
   flex-direction: column;
 }
@@ -45,6 +45,8 @@ body.dragging-divider, body.dragging-divider * {
   user-select: none;
   overflow-x: auto;
   scrollbar-width: thin;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
 }
 
 #tabs::-webkit-scrollbar { height: 4px; }

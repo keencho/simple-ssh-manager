@@ -1,0 +1,17 @@
+/*
+ * Bundled monospace fonts (S-tier, OFL licensed).
+ * Shipped via @fontsource npm packages. Loaded at app start so they're
+ * always available offline regardless of system installation status.
+ *
+ * Only the `latin` subset is imported to keep the bundle small. Terminal
+ * content is overwhelmingly ASCII; other scripts fall back to the system
+ * monospace when needed.
+ */
+@import "@fontsource/fira-code/latin-400.css";
+@import "@fontsource/fira-code/latin-700.css";
+@import "@fontsource/jetbrains-mono/latin-400.css";
+@import "@fontsource/jetbrains-mono/latin-700.css";
+@import "@fontsource/cascadia-code/latin-400.css";
+@import "@fontsource/cascadia-code/latin-700.css";
+@import "@fontsource/source-code-pro/latin-400.css";
+@import "@fontsource/source-code-pro/latin-700.css";

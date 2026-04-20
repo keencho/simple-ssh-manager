@@ -334,14 +334,24 @@ async fn download_impl(sftp: &russh_sftp::client::SftpSession, remote_path: &str
 
 fn get_data_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Cannot find home directory")?;
-    let dir = home.join(".keencho-ssh");
-    if !dir.exists() {
-        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let new_dir = home.join(".simple-ssh-client");
+    let old_dir = home.join(".keencho-ssh");
+    // One-time migration: if the legacy keencho dir exists and the new one
+    // doesn't, rename it so existing sessions/config carry over.
+    if !new_dir.exists() && old_dir.exists() {
+        let _ = fs::rename(&old_dir, &new_dir);
     }
-    Ok(dir)
+    if !new_dir.exists() {
+        fs::create_dir_all(&new_dir).map_err(|e| e.to_string())?;
+    }
+    Ok(new_dir)
 }
 
 fn get_data_path() -> Result<PathBuf, String> {
+    let cfg = load_config();
+    if let Some(custom) = cfg.data_path.filter(|s| !s.trim().is_empty()) {
+        return Ok(PathBuf::from(custom));
+    }
     Ok(get_data_dir()?.join("sessions.json"))
 }
 
@@ -360,12 +370,71 @@ fn save_data(data: &SessionsData) -> Result<(), String> {
     fs::write(path, json).map_err(|e| e.to_string())
 }
 
+// --- Logging ---
+
+fn resolve_log_dir() -> Result<PathBuf, String> {
+    let cfg = load_config();
+    let dir = if let Some(custom) = cfg.log_dir.filter(|s| !s.trim().is_empty()) {
+        PathBuf::from(custom)
+    } else {
+        get_data_dir()?.join("logs")
+    };
+    if !dir.exists() {
+        fs::create_dir_all(&dir).map_err(|e| format!("Failed to create log dir: {}", e))?;
+    }
+    Ok(dir)
+}
+
+fn slug(name: &str) -> String {
+    let mut out: String = name.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    if out.is_empty() { out.push_str("unnamed"); }
+    out.truncate(40);
+    out
+}
+
+fn ts_filename() -> String {
+    chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()
+}
+
+fn ts_line() -> String {
+    chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+}
+
+fn log_app(level: &str, msg: &str) {
+    let Ok(dir) = resolve_log_dir() else { return };
+    let path = dir.join("app.log");
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "[{}] [{}] {}", ts_line(), level, msg);
+    }
+}
+
 fn build_ssh_args(session: &SshSession) -> Vec<String> {
+    let cfg = load_config();
+    let verbose = cfg.ssh_verbose.unwrap_or(false);
     let mut args: Vec<String> = Vec::new();
+    // Legacy RSA+SHA-1 compatibility: re-enable ssh-rsa alongside modern
+    // algorithms so OpenSSH 8.8+ can still talk to CentOS 7 / older servers
+    // that don't speak rsa-sha2-256/512. The `+` prefix *adds* to the default
+    // list — modern servers continue using modern signatures first.
+    args.push("-o".to_string());
+    args.push("PubkeyAcceptedAlgorithms=+ssh-rsa".to_string());
+    args.push("-o".to_string());
+    args.push("HostKeyAlgorithms=+ssh-rsa".to_string());
+    if verbose {
+        // -vv writes debug output to stderr, which the PTY merges into the
+        // terminal view so the user actually sees "Permission denied" and
+        // other failures. We tee that same output to a log file in pty_spawn,
+        // so `-E` (which would *suppress* terminal output) is intentionally
+        // NOT used here.
+        args.push("-vv".to_string());
+    }
     if let Some(jump) = &session.jump_host {
         args.push("-o".to_string());
         args.push(format!(
-            "ProxyCommand=ssh -i \"{}\" -W %h:%p -p {} {}@{}",
+            "ProxyCommand=ssh -o PubkeyAcceptedAlgorithms=+ssh-rsa -o HostKeyAlgorithms=+ssh-rsa -i \"{}\" -W %h:%p -p {} {}@{}",
             jump.key_file, jump.port, jump.user, jump.host
         ));
     }
@@ -374,6 +443,8 @@ fn build_ssh_args(session: &SshSession) -> Vec<String> {
     args.push("-p".to_string());
     args.push(session.port.to_string());
     args.push(format!("{}@{}", session.user, session.host));
+    log_app("INFO", &format!("connect: {}@{}:{} key={} verbose={}",
+        session.user, session.host, session.port, session.key_file, verbose));
     args
 }
 
@@ -520,7 +591,11 @@ async fn open_ssh(id: String, new_window: bool, app: AppHandle, state: State<'_,
 
     let existing_label = if new_window {
         None
+    } else if app.get_webview_window("main").is_some() {
+        // Prefer the main window (sidebar + terminal layout).
+        Some("main".to_string())
     } else {
+        // Fallback: any legacy terminal-only window that happens to exist.
         app.webview_windows()
             .keys()
             .find(|label| label.starts_with("term-"))
@@ -620,6 +695,14 @@ async fn spawn_terminal(
 struct AppConfig {
     #[serde(default)]
     terminal_theme: Option<String>,
+    #[serde(default)]
+    terminal_font: Option<String>,
+    #[serde(default)]
+    log_dir: Option<String>,      // custom log directory; None = data_dir/logs
+    #[serde(default)]
+    ssh_verbose: Option<bool>,    // when true, adds -v to ssh args + tees PTY to log file
+    #[serde(default)]
+    data_path: Option<String>,    // custom sessions.json path; None = data_dir/sessions.json
 }
 
 fn config_path() -> Result<PathBuf, String> {
@@ -654,6 +737,139 @@ fn set_terminal_theme(name: String, app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn get_terminal_font() -> Option<String> {
+    load_config().terminal_font
+}
+
+#[tauri::command]
+fn set_terminal_font(name: String, app: AppHandle) -> Result<(), String> {
+    let mut cfg = load_config();
+    cfg.terminal_font = Some(name.clone());
+    save_config(&cfg)?;
+    app.emit("terminal-font-changed", name).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// --- Log/Verbose settings commands ---
+
+#[tauri::command]
+fn get_log_dir() -> Result<String, String> {
+    Ok(resolve_log_dir()?.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn set_log_dir(path: Option<String>) -> Result<String, String> {
+    let mut cfg = load_config();
+    cfg.log_dir = path.filter(|s| !s.trim().is_empty());
+    save_config(&cfg)?;
+    let resolved = resolve_log_dir()?.to_string_lossy().to_string();
+    log_app("INFO", &format!("log_dir changed to {}", resolved));
+    Ok(resolved)
+}
+
+#[tauri::command]
+fn get_ssh_verbose() -> bool {
+    load_config().ssh_verbose.unwrap_or(false)
+}
+
+#[tauri::command]
+fn set_ssh_verbose(enabled: bool) -> Result<(), String> {
+    let mut cfg = load_config();
+    cfg.ssh_verbose = Some(enabled);
+    save_config(&cfg)?;
+    log_app("INFO", &format!("ssh_verbose={}", enabled));
+    Ok(())
+}
+
+// --- Data file (sessions.json) commands ---
+
+#[tauri::command]
+fn get_data_file_path() -> Result<String, String> {
+    Ok(get_data_path()?.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn set_data_file_path(path: Option<String>) -> Result<String, String> {
+    // If a specific file is given, validate it parses as SessionsData (when the
+    // file exists). Empty/None resets to the default location.
+    if let Some(p) = path.as_ref().filter(|s| !s.trim().is_empty()) {
+        let path_buf = PathBuf::from(p);
+        if path_buf.exists() {
+            let content = fs::read_to_string(&path_buf)
+                .map_err(|e| format!("파일 읽기 실패: {}", e))?;
+            serde_json::from_str::<SessionsData>(&content)
+                .map_err(|e| format!("JSON 양식이 맞지 않습니다: {}", e))?;
+        }
+    }
+    let mut cfg = load_config();
+    cfg.data_path = path.filter(|s| !s.trim().is_empty());
+    save_config(&cfg)?;
+    let resolved = get_data_path()?.to_string_lossy().to_string();
+    log_app("INFO", &format!("data_path changed to {}", resolved));
+    Ok(resolved)
+}
+
+#[tauri::command]
+fn export_sessions_to(target_path: String) -> Result<(), String> {
+    let data = load_data()?;
+    let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+    fs::write(&target_path, json).map_err(|e| format!("저장 실패: {}", e))?;
+    log_app("INFO", &format!("exported sessions to {}", target_path));
+    Ok(())
+}
+
+#[tauri::command]
+fn import_sessions_from(source_path: String) -> Result<SessionsData, String> {
+    let content = fs::read_to_string(&source_path)
+        .map_err(|e| format!("파일 읽기 실패: {}", e))?;
+    let data: SessionsData = serde_json::from_str(&content)
+        .map_err(|e| format!("JSON 양식이 맞지 않습니다: {}", e))?;
+    save_data(&data)?;
+    log_app("INFO", &format!("imported sessions from {}", source_path));
+    Ok(data)
+}
+
+// Opens a file or directory path with the OS default handler. Used for
+// "open log folder" / "open latest log" where tauri-plugin-shell's `open`
+// rejects non-URL paths via its built-in scope validator.
+#[tauri::command]
+fn open_path_in_os(path: String) -> Result<(), String> {
+    use std::process::Command;
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer.exe").arg(&path).spawn()
+            .map_err(|e| format!("explorer failed: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(&path).spawn()
+            .map_err(|e| format!("open failed: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open").arg(&path).spawn()
+            .map_err(|e| format!("xdg-open failed: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn clear_logs() -> Result<u32, String> {
+    let dir = resolve_log_dir()?;
+    let mut count = 0u32;
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_file() { continue; }
+            if let Some(ext) = p.extension() { if ext != "log" { continue; } } else { continue; }
+            if fs::remove_file(&p).is_ok() { count += 1; }
+        }
+    }
+    log_app("INFO", &format!("cleared {} log files", count));
+    Ok(count)
+}
+
 #[derive(Clone, Serialize)]
 struct MergeTabPayload {
     terminal_id: String,
@@ -677,9 +893,11 @@ async fn drop_tab(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    // Try to find a target terminal window whose outer rect contains the cursor.
+    // Try to find a target window whose outer rect contains the cursor.
+    // Both "main" (sidebar+terminal) and "term-*" (terminal-only) windows
+    // are valid merge targets.
     for (label, window) in app.webview_windows() {
-        if !label.starts_with("term-") { continue; }
+        if label != "main" && !label.starts_with("term-") { continue; }
         if label == source_label { continue; }
         let Ok(pos) = window.outer_position() else { continue };
         let Ok(size) = window.outer_size() else { continue };
@@ -702,9 +920,11 @@ async fn drop_tab(
             return Ok(true);
         }
     }
-    // No merge target. If this is the source's last tab, "detach" would just
-    // relocate an identical window — pointless. Bail so the source keeps the tab.
-    if is_last_tab {
+    // No merge target. If a term-* source's last tab is dragged out, "detach"
+    // would just relocate an identical window — pointless. Main window stays
+    // alive with a placeholder even after all tabs leave, so detaching from it
+    // into a new window is meaningful.
+    if is_last_tab && source_label.starts_with("term-") {
         return Ok(false);
     }
     let label = format!("term-{}", Uuid::new_v4().simple());
@@ -750,6 +970,21 @@ fn pty_spawn(
     // Ensure ssh thinks stdout is a TTY
     cmd.env("TERM", "xterm-256color");
 
+    // If verbose SSH is on, open a log file that we tee the PTY output to.
+    // Filename uses user@host from the last arg (ssh command line ends with it).
+    let mut log_file: Option<std::fs::File> = None;
+    if load_config().ssh_verbose.unwrap_or(false) {
+        if let Ok(log_dir) = resolve_log_dir() {
+            let target = ssh_args.last().cloned().unwrap_or_default();
+            let fname = format!("ssh-{}-{}.log", ts_filename(), slug(&target));
+            let path = log_dir.join(&fname);
+            if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                log_app("INFO", &format!("verbose ssh log: {}", path.display()));
+                log_file = Some(f);
+            }
+        }
+    }
+
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -776,11 +1011,16 @@ fn pty_spawn(
     let app_clone = app.clone();
     let tid = terminal_id.clone();
     std::thread::spawn(move || {
+        use std::io::Write;
         let mut buf = [0u8; 8192];
+        let mut log = log_file;
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
+                    if let Some(f) = log.as_mut() {
+                        let _ = f.write_all(&buf[..n]);
+                    }
                     let _ = app_clone.emit(
                         "pty-output",
                         PtyOutputPayload {
@@ -942,6 +1182,8 @@ fn main() {
         .build()
         .expect("Failed to create tokio runtime");
 
+    log_app("INFO", &format!("app start v{}", env!("CARGO_PKG_VERSION")));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -959,7 +1201,12 @@ fn main() {
             sftp_upload, sftp_download, sftp_mkdir, sftp_delete,
             pty_spawn, pty_write, pty_resize, pty_kill, pty_take_pending, drop_tab,
             spawn_terminal, get_ssh_args_for_session,
-            get_terminal_theme, set_terminal_theme
+            get_terminal_theme, set_terminal_theme,
+            get_terminal_font, set_terminal_font,
+            get_log_dir, set_log_dir, get_ssh_verbose, set_ssh_verbose,
+            clear_logs, open_path_in_os,
+            get_data_file_path, set_data_file_path,
+            export_sessions_to, import_sessions_from
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

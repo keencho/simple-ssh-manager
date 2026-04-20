@@ -7,16 +7,36 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
-import { getTheme, applyUiTheme, type TerminalTheme } from "./themes";
+import "./fonts.css";
+import { getTheme, applyUiTheme, getFontValue, type TerminalTheme } from "./themes";
+
+// ---------- Window label detection ----------
+const myLabel = getCurrentWindow().label;
+const isMainWindow = !myLabel.startsWith("term-");
+const scoped = { target: { kind: "AnyLabel" as const, label: myLabel } };
 
 // ---------- Body setup ----------
-document.body.innerHTML = "";
-const tabsEl = document.createElement("div");
-tabsEl.id = "tabs";
-const termsEl = document.createElement("div");
-termsEl.id = "terminals";
-document.body.append(tabsEl, termsEl);
-document.title = "Terminal";
+// In the main window, the sidebar + terminal area layout already created
+// #tabs and #terminals (via renderShell in main.ts). In a term-* window,
+// we own the whole body and create them ourselves.
+let tabsEl: HTMLElement;
+let termsEl: HTMLElement;
+if (isMainWindow) {
+  const t = document.getElementById("tabs");
+  const ts = document.getElementById("terminals");
+  if (!t || !ts) throw new Error("Main window terminal area not found");
+  tabsEl = t;
+  termsEl = ts;
+} else {
+  document.body.innerHTML = "";
+  tabsEl = document.createElement("div");
+  tabsEl.id = "tabs";
+  termsEl = document.createElement("div");
+  termsEl.id = "terminals";
+  document.body.append(tabsEl, termsEl);
+  document.body.classList.add("terminal-window");
+  document.title = "Terminal";
+}
 
 // ---------- Types ----------
 interface AddTabPayload {
@@ -77,9 +97,7 @@ const FONT_DEFAULT = 13;
 
 let currentTheme: TerminalTheme = getTheme(null);
 applyUiTheme(currentTheme.ui);
-
-const myLabel = getCurrentWindow().label;
-const scoped = { target: { kind: "AnyLabel" as const, label: myLabel } };
+let currentFontFamily: string = getFontValue(null);
 
 const CLOSE_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>`;
 const ZOOM_OUT_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 3h6M3 9v6m0-6h6M3 9l6 6m12-6v6m0-6h-6m6 0l-6 6M9 21H3m0 0v-6"/></svg>`;
@@ -149,7 +167,22 @@ function chooseTitle(base: string): string {
 
 function updateWindowTitle() {
   const ap = getActivePane();
-  void getCurrentWindow().setTitle(ap ? ap.pane.title : "Terminal");
+  const fallback = isMainWindow ? "Simple SSH Client" : "Terminal";
+  void getCurrentWindow().setTitle(ap ? ap.pane.title : fallback);
+}
+
+// Main-window placeholder visible when no tabs are open.
+function showPlaceholder() {
+  if (!isMainWindow) return;
+  if (document.querySelector(".terminal-placeholder")) return;
+  const ph = document.createElement("div");
+  ph.className = "terminal-placeholder";
+  ph.textContent = "사이드바에서 세션을 더블클릭하거나 우클릭 → 연결";
+  termsEl.appendChild(ph);
+}
+
+function hidePlaceholder() {
+  document.querySelector(".terminal-placeholder")?.remove();
 }
 
 function sendResize(pane: Pane) {
@@ -178,6 +211,21 @@ function applyThemeToAllPanes(t: TerminalTheme) {
 
 listen<string>("terminal-theme-changed", (event) => {
   applyThemeToAllPanes(getTheme(event.payload));
+});
+
+function applyFontToAllPanes(fontFamily: string) {
+  currentFontFamily = fontFamily;
+  for (const tab of tabs.values()) {
+    for (const pane of tab.panes) {
+      pane.term.options.fontFamily = fontFamily;
+      try { pane.fit.fit(); } catch {}
+      sendResize(pane);
+    }
+  }
+}
+
+listen<string>("terminal-font-changed", (event) => {
+  applyFontToAllPanes(getFontValue(event.payload));
 });
 
 // ---------- PTY output routing ----------
@@ -274,8 +322,9 @@ function createPane(init: { id: string; baseTitle: string; title: string; sshArg
 
   const term = new Terminal({
     theme: currentTheme.xterm,
-    fontFamily: '"Cascadia Mono", "Consolas", "Menlo", monospace',
+    fontFamily: currentFontFamily,
     fontSize: FONT_DEFAULT,
+    lineHeight: 1.08,
     cursorBlink: true,
     cursorStyle: "block",
     scrollback: 10000,
@@ -361,6 +410,8 @@ async function addTab(payload: AddTabPayload) {
   const initialContent = payload.initial_content || "";
 
   const tabId = uid();
+
+  hidePlaceholder();
 
   const tabBtnEl = document.createElement("div");
   tabBtnEl.className = "tab";
@@ -559,6 +610,7 @@ async function closePane(terminalId: string) {
   }
   if (tab.zoomedPaneId === terminalId) tab.zoomedPaneId = null;
 
+  clearBroadcastIfSinglePane(tab);
   renderTabLayout(tab);
   applyFocusStyles(tab);
   const focused = tab.panes.find(p => p.id === tab.focusedPaneId);
@@ -579,8 +631,14 @@ async function closeTab(tabId: string) {
   if (activeTabId === tabId) {
     activeTabId = null;
     const next = tabs.keys().next().value;
-    if (next) setActiveTab(next);
-    else void getCurrentWindow().close();
+    if (next) {
+      setActiveTab(next);
+    } else if (isMainWindow) {
+      updateWindowTitle();
+      showPlaceholder();
+    } else {
+      void getCurrentWindow().close();
+    }
   }
 }
 
@@ -699,12 +757,21 @@ function toggleZoomActive() {
 }
 
 // ---------- Broadcast ----------
+// Only meaningful on split tabs (2+ panes). Single-pane tabs ignore the toggle.
 function toggleBroadcastActive() {
   const t = getActiveTab();
-  if (!t) return;
+  if (!t || t.panes.length < 2) return;
   t.broadcast = !t.broadcast;
   t.panesWrapEl.classList.toggle("broadcast", t.broadcast);
   t.tabBtnEl.classList.toggle("broadcast", t.broadcast);
+}
+
+function clearBroadcastIfSinglePane(tab: Tab) {
+  if (tab.broadcast && tab.panes.length < 2) {
+    tab.broadcast = false;
+    tab.panesWrapEl.classList.remove("broadcast");
+    tab.tabBtnEl.classList.remove("broadcast");
+  }
 }
 
 // ---------- Font zoom (Ctrl+wheel, per pane) ----------
@@ -931,6 +998,7 @@ async function dropTab(tabId: string, screenX: number, screenY: number) {
     normalizeRatios(t);
     if (t.focusedPaneId === fp.id) t.focusedPaneId = t.panes[Math.min(index, t.panes.length - 1)].id;
     if (t.zoomedPaneId === fp.id) t.zoomedPaneId = null;
+    clearBroadcastIfSinglePane(t);
     renderTabLayout(t);
     applyFocusStyles(t);
   }
@@ -1018,8 +1086,10 @@ tabsEl.addEventListener("contextmenu", (e) => {
     items.push({ label: "세로로 분할 (다른 세션...)", action: () => { setActiveTab(tabId); openSessionPickerForSplit(); } });
     items.push({ label: "-", action: () => {} });
   }
-  items.push({ label: tab.broadcast ? "브로드캐스트 OFF" : "브로드캐스트 ON", action: () => { setActiveTab(tabId); toggleBroadcastActive(); } });
-  items.push({ label: "-", action: () => {} });
+  if (tab.panes.length > 1) {
+    items.push({ label: tab.broadcast ? "브로드캐스트 OFF" : "브로드캐스트 ON", action: () => { setActiveTab(tabId); toggleBroadcastActive(); } });
+    items.push({ label: "-", action: () => {} });
+  }
   items.push({ label: "탭 닫기", action: () => void closeTab(tabId), danger: true });
   showContextMenu(e.clientX, e.clientY, items);
 });
@@ -1217,6 +1287,7 @@ async function detachPane(paneId: string, screenX: number, screenY: number) {
       tab.focusedPaneId = tab.panes[Math.min(index, tab.panes.length - 1)].id;
     }
     if (tab.zoomedPaneId === paneId) tab.zoomedPaneId = null;
+    clearBroadcastIfSinglePane(tab);
     renderTabLayout(tab);
     applyFocusStyles(tab);
   }
@@ -1234,6 +1305,7 @@ function extractPaneToNewTab(srcTab: Tab, srcIdx: number) {
     srcTab.focusedPaneId = srcTab.panes[Math.min(srcIdx, srcTab.panes.length - 1)].id;
   }
   if (srcTab.zoomedPaneId === pane.id) srcTab.zoomedPaneId = null;
+  clearBroadcastIfSinglePane(srcTab);
   // Sync tab button title when collapsing back to a single pane
   if (srcTab.panes.length === 1) {
     (srcTab.tabBtnEl.querySelector(".tab-title") as HTMLElement).textContent = srcTab.panes[0].title;
@@ -1401,6 +1473,7 @@ function movePaneAcrossTabs(srcTab: Tab, srcIdx: number, dstTab: Tab, dstIdx: nu
     normalizeRatios(srcTab);
     if (srcTab.focusedPaneId === pane.id) srcTab.focusedPaneId = srcTab.panes[Math.min(srcIdx, srcTab.panes.length - 1)].id;
     if (srcTab.zoomedPaneId === pane.id) srcTab.zoomedPaneId = null;
+    clearBroadcastIfSinglePane(srcTab);
     if (srcTab.panes.length === 1) {
       (srcTab.tabBtnEl.querySelector(".tab-title") as HTMLElement).textContent = srcTab.panes[0].title;
     }
@@ -1455,10 +1528,13 @@ window.addEventListener("resize", () => {
 // ---------- Bootstrap ----------
 (async () => {
   try {
-    const saved = await invoke<string | null>("get_terminal_theme");
-    if (saved) applyThemeToAllPanes(getTheme(saved));
+    const savedTheme = await invoke<string | null>("get_terminal_theme");
+    if (savedTheme) applyThemeToAllPanes(getTheme(savedTheme));
+    const savedFont = await invoke<string | null>("get_terminal_font");
+    if (savedFont) currentFontFamily = getFontValue(savedFont);
     const initial = await invoke<AddTabPayload | null>("pty_take_pending", { windowLabel: myLabel });
     if (initial) await addTab(initial);
+    else if (isMainWindow) showPlaceholder();
   } catch (e) {
     console.error("bootstrap failed:", e);
   }

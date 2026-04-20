@@ -537,3 +537,57 @@ export function applyUiTheme(ui: UiTheme) {
   r.setProperty("--danger", ui.danger);
   r.setProperty("--border", ui.border);
 }
+
+// ---------- Font options ----------
+// Ranked by 2024-2025 developer popularity (dev surveys, GitHub stars, font rankings).
+
+export interface FontOption {
+  label: string;     // stored in config, shown in UI
+  value: string;     // css font-family value (with fallbacks)
+  blurb?: string;    // description shown in UI
+  bundled?: boolean; // true = shipped via @fontsource, always available offline
+  cdnUrl?: string;   // Google Fonts CSS URL for on-demand preview (if not installed)
+  installUrl?: string; // official download / info page
+}
+
+// Proprietary fonts (MonoLisa, Input Mono), OS-exclusive fonts (Consolas,
+// Menlo, Courier New), and ambiguous-license fonts (Ubuntu Mono) have been
+// removed. We cannot bundle them legally, and relying on system presence is
+// unreliable across platforms.
+export const FONTS: FontOption[] = [
+  // ----- Bundled (S-tier, OFL, shipped via @fontsource) -----
+  { label: "Fira Code",         value: '"Fira Code", "Cascadia Code", monospace',       bundled: true, blurb: "Mozilla · 1,500+ 리거처",               installUrl: "https://github.com/tonsky/FiraCode/releases" },
+  { label: "JetBrains Mono",    value: '"JetBrains Mono", "Cascadia Code", monospace',  bundled: true, blurb: "IntelliJ · 139 리거처, 큰 x-height",   installUrl: "https://www.jetbrains.com/lp/mono/" },
+  { label: "Cascadia Code",     value: '"Cascadia Code", "Cascadia Mono", monospace',   bundled: true, blurb: "MS · Win11 기본, 리거처 지원",         installUrl: "https://github.com/microsoft/cascadia-code/releases" },
+  { label: "Source Code Pro",   value: '"Source Code Pro", "Cascadia Mono", monospace', bundled: true, blurb: "Adobe 클래식, 작은 크기 최적",         installUrl: "https://github.com/adobe-fonts/source-code-pro/releases" },
+
+  // ----- Non-bundled OFL fonts (installed on system or CDN-preview) -----
+  { label: "Monaspace Neon",    value: '"Monaspace Neon", "Cascadia Code", monospace',  blurb: "GitHub · 5 패밀리 texture healing",  installUrl: "https://monaspace.githubnext.com/" },
+  { label: "Monaspace Argon",   value: '"Monaspace Argon", "Cascadia Code", monospace', blurb: "GitHub Monaspace 휴머니스트",         installUrl: "https://monaspace.githubnext.com/" },
+  { label: "Maple Mono",        value: '"Maple Mono", "Cascadia Code", monospace',      blurb: "2024 신작 · 아시아 개발자 인기",     installUrl: "https://github.com/subframe7536/maple-font/releases" },
+  { label: "Commit Mono",       value: '"Commit Mono", "Cascadia Code", monospace',     blurb: "기호 커닝 최적화",                    installUrl: "https://commitmono.com/" },
+  { label: "Cascadia Mono",     value: '"Cascadia Mono", "Consolas", monospace',
+    cdnUrl: "https://fonts.googleapis.com/css2?family=Cascadia+Mono:wght@400;700&display=swap",
+    blurb: "Cascadia 리거처 없는 버전",                                                   installUrl: "https://github.com/microsoft/cascadia-code/releases" },
+  { label: "DejaVu Sans Mono",  value: '"DejaVu Sans Mono", monospace',                 blurb: "Linux 표준, 유니코드 광범위",        installUrl: "https://dejavu-fonts.github.io/Download.html" },
+  { label: "Hack",              value: '"Hack", "Cascadia Mono", monospace',            blurb: "Bitstream 기반, 심볼 강점",          installUrl: "https://sourcefoundry.org/hack/" },
+  { label: "Roboto Mono",       value: '"Roboto Mono", "Cascadia Mono", monospace',
+    cdnUrl: "https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap",
+    blurb: "Google, sans serif 느낌",                                                    installUrl: "https://fonts.google.com/specimen/Roboto+Mono" },
+  { label: "IBM Plex Mono",     value: '"IBM Plex Mono", "Cascadia Mono", monospace',
+    cdnUrl: "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&display=swap",
+    blurb: "IBM 오픈소스",                                                                installUrl: "https://github.com/IBM/plex/releases" },
+  { label: "Inconsolata",       value: '"Inconsolata", "Cascadia Mono", monospace',
+    cdnUrl: "https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;700&display=swap",
+    blurb: "핸드힌팅 · 엘레강트",                                                        installUrl: "https://fonts.google.com/specimen/Inconsolata" },
+
+  // ----- OS fallback -----
+  { label: "시스템 monospace",   value: 'ui-monospace, SFMono-Regular, monospace', bundled: true, blurb: "OS 기본 monospace" },
+];
+
+export const DEFAULT_FONT = "Cascadia Code";
+
+export function getFontValue(label: string | null | undefined): string {
+  const target = label ?? DEFAULT_FONT;
+  return FONTS.find((f) => f.label === target)?.value ?? FONTS[0].value;
+}
