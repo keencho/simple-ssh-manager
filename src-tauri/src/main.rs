@@ -1187,6 +1187,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(AppState {
             sftp_connections: Mutex::new(HashMap::new()),
             ptys: Mutex::new(HashMap::new()),

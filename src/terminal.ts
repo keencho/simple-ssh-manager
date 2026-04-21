@@ -171,16 +171,6 @@ function updateWindowTitle() {
   void getCurrentWindow().setTitle(ap ? ap.pane.title : fallback);
 }
 
-// Main-window placeholder visible when no tabs are open.
-function showPlaceholder() {
-  if (!isMainWindow) return;
-  if (document.querySelector(".terminal-placeholder")) return;
-  const ph = document.createElement("div");
-  ph.className = "terminal-placeholder";
-  ph.textContent = "사이드바에서 세션을 더블클릭하거나 우클릭 → 연결";
-  termsEl.appendChild(ph);
-}
-
 function hidePlaceholder() {
   document.querySelector(".terminal-placeholder")?.remove();
 }
@@ -635,7 +625,6 @@ async function closeTab(tabId: string) {
       setActiveTab(next);
     } else if (isMainWindow) {
       updateWindowTitle();
-      showPlaceholder();
     } else {
       void getCurrentWindow().close();
     }
@@ -793,12 +782,51 @@ document.addEventListener("wheel", (e) => {
   adjustFontSize(ap.pane, e.deltaY > 0 ? -1 : 1);
 }, { capture: true, passive: false });
 
+// ---------- Clipboard ----------
+async function copyActiveSelection(): Promise<boolean> {
+  const ap = getActivePane();
+  if (!ap) return false;
+  const sel = ap.pane.term.getSelection();
+  if (!sel) return false;
+  try {
+    await navigator.clipboard.writeText(sel);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pasteToActive() {
+  const ap = getActivePane();
+  if (!ap) return;
+  let text = "";
+  try { text = await navigator.clipboard.readText(); } catch { return; }
+  if (!text) return;
+  const bytes = Array.from(new TextEncoder().encode(text));
+  if (ap.tab.broadcast) {
+    for (const p of ap.tab.panes) {
+      if (!p.exited) void invoke("pty_write", { terminalId: p.id, data: bytes });
+    }
+  } else if (!ap.pane.exited) {
+    void invoke("pty_write", { terminalId: ap.pane.id, data: bytes });
+  }
+}
+
+function hasSelectionInActivePane(): boolean {
+  const ap = getActivePane();
+  return !!ap && ap.pane.term.hasSelection();
+}
+
 // ---------- Keyboard shortcuts ----------
 function isOurShortcut(e: KeyboardEvent): boolean {
   if (e.ctrlKey && e.shiftKey && e.code === "Digit5") return true;
   if (e.ctrlKey && e.shiftKey && e.code === "KeyW") return true;
   if (e.ctrlKey && e.shiftKey && e.code === "KeyB") return true;
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyC") return true;
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyV") return true;
   if (e.ctrlKey && e.shiftKey && e.key === "Enter") return true;
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyC" && hasSelectionInActivePane()) return true;
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyV") return true;
   if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) return true;
   return false;
 }
@@ -824,6 +852,28 @@ function handleShortcut(e: KeyboardEvent): boolean {
   if (e.ctrlKey && e.shiftKey && e.code === "KeyB") {
     e.preventDefault();
     toggleBroadcastActive();
+    return true;
+  }
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyC") {
+    e.preventDefault();
+    void copyActiveSelection();
+    return true;
+  }
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyV") {
+    e.preventDefault();
+    void pasteToActive();
+    return true;
+  }
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyC" && hasSelectionInActivePane()) {
+    e.preventDefault();
+    void copyActiveSelection().then((ok) => {
+      if (ok) getActivePane()?.pane.term.clearSelection();
+    });
+    return true;
+  }
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyV") {
+    e.preventDefault();
+    void pasteToActive();
     return true;
   }
   if (e.altKey && e.shiftKey && !e.ctrlKey) {
@@ -1094,13 +1144,14 @@ tabsEl.addEventListener("contextmenu", (e) => {
   showContextMenu(e.clientX, e.clientY, items);
 });
 
-// Pane header right-click menu
+// Pane header / xterm area right-click menu
 termsEl.addEventListener("contextmenu", (e) => {
   const header = (e.target as HTMLElement).closest(".pane-header") as HTMLElement | null;
-  if (!header) return;
+  const xtermArea = (e.target as HTMLElement).closest(".pane-xterm") as HTMLElement | null;
+  const paneEl = (header ?? xtermArea)?.closest(".term-pane") as HTMLElement | null;
+  if (!paneEl) return;
   e.preventDefault();
   e.stopPropagation();
-  const paneEl = header.closest(".term-pane") as HTMLElement;
   const paneId = paneEl.dataset.paneId!;
   const r = findPane(paneId);
   if (!r) return;
@@ -1109,6 +1160,16 @@ termsEl.addEventListener("contextmenu", (e) => {
   tab.focusedPaneId = paneId;
   applyFocusStyles(tab);
   const items: MenuItem[] = [];
+  if (xtermArea) {
+    const hasSel = pane.term.hasSelection();
+    items.push({
+      label: "복사",
+      action: () => { void copyActiveSelection().then((ok) => { if (ok) pane.term.clearSelection(); }); },
+    });
+    if (!hasSel) items[items.length - 1].label += " (선택 없음)";
+    items.push({ label: "붙여넣기", action: () => void pasteToActive() });
+    items.push({ label: "-", action: () => {} });
+  }
   if (tab.panes.length < MAX_PANES_PER_TAB && pane.sshArgs.length > 0) {
     items.push({ label: "세로로 분할 (같은 세션)", action: () => splitActiveSameSession() });
     items.push({ label: "세로로 분할 (다른 세션...)", action: () => openSessionPickerForSplit() });
@@ -1534,7 +1595,9 @@ window.addEventListener("resize", () => {
     if (savedFont) currentFontFamily = getFontValue(savedFont);
     const initial = await invoke<AddTabPayload | null>("pty_take_pending", { windowLabel: myLabel });
     if (initial) await addTab(initial);
-    else if (isMainWindow) showPlaceholder();
+    else if (isMainWindow) {
+      // showPlaceholder();
+    }
   } catch (e) {
     console.error("bootstrap failed:", e);
   }

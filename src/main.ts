@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open, save, confirm as tauriConfirm } from "@tauri-apps/plugin-dialog";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { THEMES, THEME_ORDER, THEME_GROUPS, DEFAULT_THEME, FONTS, DEFAULT_FONT, getFontValue, type TerminalTheme, type FontOption } from "./themes";
+import { THEMES, THEME_ORDER, THEME_GROUPS, DEFAULT_THEME, FONTS, DEFAULT_FONT, getFontValue, getTheme, applyUiTheme, type TerminalTheme, type FontOption } from "./themes";
 import "./fonts.css";
 
 // Block browser default context menu (Inspect / Reload / etc.)
@@ -71,7 +71,20 @@ interface SftpProgress {
 
 let data: SessionsData = { folders: [], sessions: [], root_folder_order: null };
 let searchQuery = "";
-let collapsedFolders = new Set<string>();
+
+const COLLAPSED_FOLDERS_KEY = "ssh-collapsed-folders";
+function loadCollapsedFolders(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_FOLDERS_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? new Set(arr) : new Set();
+  } catch { return new Set(); }
+}
+function saveCollapsedFolders() {
+  try { localStorage.setItem(COLLAPSED_FOLDERS_KEY, JSON.stringify([...collapsedFolders])); } catch {}
+}
+let collapsedFolders = loadCollapsedFolders();
 let globalNewWindow = false;
 
 // --- SVG Icons ---
@@ -373,6 +386,7 @@ async function deleteFolder(id: string) {
   try {
     data = await invoke<SessionsData>("delete_folder", { id });
     collapsedFolders.delete(id);
+    saveCollapsedFolders();
     renderTree();
     renderStats();
   } catch (e) {
@@ -390,6 +404,7 @@ async function editFolder(id: string) {
     if (!ok) return;
     data = await invoke<SessionsData>("delete_folder", { id });
     collapsedFolders.delete(id);
+    saveCollapsedFolders();
   } else {
     data = await invoke<SessionsData>("update_folder", { id, name });
   }
@@ -1811,10 +1826,23 @@ function renderShell() {
       <div id="sidebar-resizer"></div>
       <div id="terminal-area">
         <div id="tabs"></div>
-        <div id="terminals"></div>
+        <div id="terminals">
+          <div id="welcome-screen" class="welcome-screen">
+            <h1>서버에 연결하세요</h1>
+            <p>사이드바에서 세션을 <b>더블클릭</b>하여 연결하거나,<br>왼쪽 아래 <b>+ 세션</b> 버튼으로 새 서버를 추가하세요.</p>
+          </div>
+        </div>
       </div>
     </div>
   `;
+
+  const tabsElForObs = document.getElementById("tabs")!;
+  const welcomeObs = new MutationObserver(() => {
+    const welcome = document.getElementById("welcome-screen");
+    if (!welcome) return;
+    welcome.style.display = tabsElForObs.children.length > 0 ? "none" : "";
+  });
+  welcomeObs.observe(tabsElForObs, { childList: true });
 
   initSidebarResizer();
 
@@ -1840,6 +1868,7 @@ function renderShell() {
     if (folderHeader && !(e.target as HTMLElement).closest("[data-action]") && !(e.target as HTMLElement).closest(".drag-handle")) {
       const fId = folderHeader.dataset.folderToggle!;
       if (collapsedFolders.has(fId)) collapsedFolders.delete(fId); else collapsedFolders.add(fId);
+      saveCollapsedFolders();
       renderTree();
       return;
     }
@@ -1909,7 +1938,15 @@ function renderShell() {
 
 if (!IS_TERMINAL_WINDOW) {
   (async () => {
+    // Pre-apply saved theme before first paint to avoid default→saved flash.
+    try {
+      const savedTheme = await invoke<string | null>("get_terminal_theme");
+      if (savedTheme) applyUiTheme(getTheme(savedTheme).ui);
+    } catch {}
     renderShell();
+    // Reveal window (tauri.conf.json visible:false → window-state plugin
+    // restored size silently; showing here = no flash).
+    try { await getCurrentWindow().show(); } catch {}
     await loadData();
     // Load terminal module after the DOM is ready so it can mount
     // into #tabs / #terminals created by renderShell.
