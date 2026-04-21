@@ -65,9 +65,12 @@ body {
 .sidebar-top {
   padding: 10px 10px 8px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.sidebar-top .search-wrap { min-width: 0; }
+.sidebar-top .search-wrap { min-width: 0; flex: 1; }
 .sidebar-top .search-wrap input {
   padding: 8px 12px 8px 36px;
   font-size: 13px;
@@ -1891,3 +1894,69 @@ body.dnd-active * { cursor: grabbing !important; user-select: none; }
   color: var(--fg);
   font-weight: 600;
 }
+
+/* === Sidebar position: right === */
+body.sidebar-right #app-layout { flex-direction: row-reverse; }
+body.sidebar-right #sidebar { border-right: none; border-left: 1px solid var(--border); }
+
+/* Hide-button chevron flips to point toward screen edge */
+body.sidebar-right #sidebar-hide-btn svg { transform: rotate(180deg); }
+
+/* === Sidebar hidden === */
+body.sidebar-hidden #sidebar { display: none; }
+body.sidebar-hidden #sidebar-resizer { display: none; }
+
+/* === Sidebar edge trigger (shown when hidden) === */
+.sidebar-edge-trigger {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 48px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+body:not(.sidebar-right) .sidebar-edge-trigger {
+  left: 0;
+  border-radius: 0 8px 8px 0;
+  border-left: none;
+}
+body.sidebar-right .sidebar-edge-trigger {
+  right: 0;
+  border-radius: 8px 0 0 8px;
+  border-right: none;
+}
+body.sidebar-right .sidebar-edge-trigger svg { transform: rotate(180deg); }
+body.sidebar-hidden .sidebar-edge-trigger { display: flex; }
+.sidebar-edge-trigger:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* === Settings: layout section radio group === */
+.settings-radio-group {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+.settings-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+.settings-radio-label:hover { background: var(--bg-hover); color: var(--text); }
+.settings-radio-label input { accent-color: var(--accent); }

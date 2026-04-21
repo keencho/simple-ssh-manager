@@ -87,6 +87,30 @@ function saveCollapsedFolders() {
 let collapsedFolders = loadCollapsedFolders();
 let globalNewWindow = false;
 
+const SIDEBAR_POSITION_KEY = "kc-sidebar-position";
+const SIDEBAR_HIDDEN_KEY = "kc-sidebar-hidden";
+type SidebarPosition = "left" | "right";
+let sidebarPosition: SidebarPosition =
+  (localStorage.getItem(SIDEBAR_POSITION_KEY) as SidebarPosition) === "right" ? "right" : "left";
+let sidebarHidden: boolean = localStorage.getItem(SIDEBAR_HIDDEN_KEY) === "1";
+
+function applySidebarState() {
+  document.body.classList.toggle("sidebar-right", sidebarPosition === "right");
+  document.body.classList.toggle("sidebar-hidden", sidebarHidden);
+}
+function setSidebarPosition(pos: SidebarPosition) {
+  sidebarPosition = pos;
+  localStorage.setItem(SIDEBAR_POSITION_KEY, pos);
+  applySidebarState();
+  window.dispatchEvent(new Event("resize"));
+}
+function toggleSidebarHidden() {
+  sidebarHidden = !sidebarHidden;
+  localStorage.setItem(SIDEBAR_HIDDEN_KEY, sidebarHidden ? "1" : "0");
+  applySidebarState();
+  window.dispatchEvent(new Event("resize"));
+}
+
 // --- SVG Icons ---
 
 const ICONS = {
@@ -101,6 +125,7 @@ const ICONS = {
   folder: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>`,
   chevronDown: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>`,
   chevronRight: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>`,
+  chevronLeft: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>`,
   terminal: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>`,
   server: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1" fill="currentColor"/><circle cx="6" cy="18" r="1" fill="currentColor"/></svg>`,
   drag: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" opacity="0.4"><circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/></svg>`,
@@ -705,7 +730,8 @@ function initSidebarResizer() {
 
   document.addEventListener("mousemove", (e) => {
     if (!dragging) return;
-    const w = Math.max(240, Math.min(640, startW + (e.clientX - startX)));
+    const direction = sidebarPosition === "right" ? -1 : 1;
+    const w = Math.max(240, Math.min(640, startW + direction * (e.clientX - startX)));
     sidebar.style.width = w + "px";
   });
 
@@ -798,6 +824,7 @@ async function openSettings() {
         <aside class="settings-nav">
           <button class="settings-nav-item active" data-section="font">폰트</button>
           <button class="settings-nav-item" data-section="theme">테마</button>
+          <button class="settings-nav-item" data-section="layout">외관</button>
           <button class="settings-nav-item" data-section="log">로그</button>
           <button class="settings-nav-item" data-section="data">데이터</button>
         </aside>
@@ -817,6 +844,20 @@ The quick brown fox jumps over 0123456789 ({[]}) "\`~$"</pre>
             <div class="settings-panel-subtitle">랭킹 순 · 선택하면 열려있는 모든 터미널에 즉시 적용됩니다.</div>
             <div class="theme-groups">
               ${THEME_GROUPS.map(renderGroup).join("")}
+            </div>
+          </section>
+          <section class="settings-panel" data-section="layout" hidden>
+            <div class="settings-panel-title">외관</div>
+            <div class="settings-panel-subtitle">사이드바 위치를 지정합니다. 숨김/펼침은 사이드바 상단의 화살표 버튼으로 언제든 토글할 수 있습니다.</div>
+            <div class="settings-radio-group">
+              <label class="settings-radio-label">
+                <input type="radio" name="sidebar-pos" value="left" ${sidebarPosition === "left" ? "checked" : ""} />
+                <span>왼쪽</span>
+              </label>
+              <label class="settings-radio-label">
+                <input type="radio" name="sidebar-pos" value="right" ${sidebarPosition === "right" ? "checked" : ""} />
+                <span>오른쪽</span>
+              </label>
             </div>
           </section>
           <section class="settings-panel" data-section="log" hidden>
@@ -893,6 +934,11 @@ The quick brown fox jumps over 0123456789 ({[]}) "\`~$"</pre>
         else p.setAttribute("hidden", "");
       });
     });
+  });
+
+  // Layout section
+  overlay.querySelectorAll<HTMLInputElement>('input[name="sidebar-pos"]').forEach((r) => {
+    r.addEventListener("change", () => setSidebarPosition(r.value as SidebarPosition));
   });
 
   // Font section
@@ -1805,6 +1851,7 @@ function renderShell() {
             <span class="search-icon">${ICONS.search}</span>
             <input type="text" id="search" placeholder="검색..." />
           </div>
+          <button class="btn-ghost-sm" id="sidebar-hide-btn" title="사이드바 숨기기">${ICONS.chevronLeft}</button>
         </div>
         <div id="content-area" class="tree-list"></div>
         <div class="sidebar-bottom">
@@ -1834,7 +1881,10 @@ function renderShell() {
         </div>
       </div>
     </div>
+    <button class="sidebar-edge-trigger" id="sidebar-edge-trigger" title="사이드바 열기">${ICONS.chevronRight}</button>
   `;
+
+  applySidebarState();
 
   const tabsElForObs = document.getElementById("tabs")!;
   const welcomeObs = new MutationObserver(() => {
@@ -1848,6 +1898,9 @@ function renderShell() {
 
   const searchInput = document.getElementById("search") as HTMLInputElement;
   searchInput.addEventListener("input", () => { searchQuery = searchInput.value; renderTree(); });
+
+  document.getElementById("sidebar-hide-btn")!.addEventListener("click", toggleSidebarHidden);
+  document.getElementById("sidebar-edge-trigger")!.addEventListener("click", toggleSidebarHidden);
 
   document.getElementById("add-session-btn")!.addEventListener("click", () => openModal());
   document.getElementById("add-folder-btn")!.addEventListener("click", addFolder);
