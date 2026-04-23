@@ -21,12 +21,13 @@ export interface TerminalTheme {
   ui: UiTheme;
 }
 
+// Group identifiers — actual labels resolved via i18n at render time.
 const G = {
-  essentials: "모던 필수",
-  classic: "클래식 · 뮤트",
-  blue: "쿨 블루",
-  impact: "임팩트 · 레트로",
-  mac: "Mac 클래식",
+  essentials: "themes.groups.essentials",
+  classic: "themes.groups.classic",
+  blue: "themes.groups.blue",
+  impact: "themes.groups.impact",
+  mac: "themes.groups.mac",
 };
 
 // ---------- 21 curated dark themes, ranked ----------
@@ -36,7 +37,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "one-dark-pro": {
     name: "one-dark-pro",
     displayName: "One Dark Pro",
-    blurb: "VSCode 설치수 1위 · Atom 원조 다크",
+    blurb: "themes.blurbs.one-dark-pro",
     group: G.essentials,
     xterm: {
       background: "#282c34", foreground: "#abb2bf",
@@ -57,7 +58,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "dracula": {
     name: "dracula",
     displayName: "Dracula",
-    blurb: "파스텔 네온, 자주색 아이콘",
+    blurb: "themes.blurbs.dracula",
     group: G.essentials,
     xterm: {
       background: "#282a36", foreground: "#f8f8f2",
@@ -78,7 +79,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "github-dark": {
     name: "github-dark",
     displayName: "GitHub Dark",
-    blurb: "거의 순수 블랙, 모던 · 기업",
+    blurb: "themes.blurbs.github-dark",
     group: G.essentials,
     xterm: {
       background: "#0d1117", foreground: "#c9d1d9",
@@ -99,7 +100,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "tokyo-night": {
     name: "tokyo-night",
     displayName: "Tokyo Night",
-    blurb: "깊은 인디고 · 네온 액센트",
+    blurb: "themes.blurbs.tokyo-night",
     group: G.essentials,
     xterm: {
       background: "#1a1b26", foreground: "#c0caf5",
@@ -120,7 +121,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "catppuccin-mocha": {
     name: "catppuccin-mocha",
     displayName: "Catppuccin Mocha",
-    blurb: "파스텔 · 2024-25 커뮤니티 급상승",
+    blurb: "themes.blurbs.catppuccin-mocha",
     group: G.essentials,
     xterm: {
       background: "#1e1e2e", foreground: "#cdd6f4",
@@ -142,7 +143,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "gruvbox-dark": {
     name: "gruvbox-dark",
     displayName: "Gruvbox Dark (Hard)",
-    blurb: "따뜻한 중성 블랙 · 레트로 얼씨",
+    blurb: "themes.blurbs.gruvbox-dark",
     group: G.classic,
     xterm: {
       background: "#1d2021", foreground: "#ebdbb2",
@@ -163,7 +164,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "solarized-dark": {
     name: "solarized-dark",
     displayName: "Solarized Dark",
-    blurb: "Ethan Schoonover · 최다 이식 역사적 클래식",
+    blurb: "themes.blurbs.solarized-dark",
     group: G.classic,
     xterm: {
       background: "#002b36", foreground: "#839496",
@@ -184,7 +185,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "nord": {
     name: "nord",
     displayName: "Nord",
-    blurb: "북극권 블루그레이 · 차분함의 대명사",
+    blurb: "themes.blurbs.nord",
     group: G.classic,
     xterm: {
       background: "#2e3440", foreground: "#d8dee9",
@@ -205,7 +206,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "monokai-pro": {
     name: "monokai-pro",
     displayName: "Monokai Pro",
-    blurb: "따뜻한 회색 · 높은 대비 · 클래식",
+    blurb: "themes.blurbs.monokai-pro",
     group: G.classic,
     xterm: {
       background: "#2d2a2e", foreground: "#fcfcfa",
@@ -226,7 +227,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "kanagawa": {
     name: "kanagawa",
     displayName: "Kanagawa",
-    blurb: "호쿠사이 먹빛 · 성숙한 페인터리",
+    blurb: "themes.blurbs.kanagawa",
     group: G.classic,
     xterm: {
       background: "#1f1f28", foreground: "#dcd7ba",
@@ -248,7 +249,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "night-owl": {
     name: "night-owl",
     displayName: "Night Owl",
-    blurb: "Sarah Drasner · 접근성 튜닝된 네이비",
+    blurb: "themes.blurbs.night-owl",
     group: G.blue,
     xterm: {
       background: "#011627", foreground: "#d6deeb",
@@ -269,7 +270,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "ayu-dark": {
     name: "ayu-dark",
     displayName: "Ayu Dark",
-    blurb: "블랙 + 티일 · 샤프하고 미니멀",
+    blurb: "themes.blurbs.ayu-dark",
     group: G.blue,
     xterm: {
       background: "#0f1419", foreground: "#bfbdb6",
@@ -290,7 +291,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "palenight": {
     name: "palenight",
     displayName: "Palenight",
-    blurb: "머티리얼 인디고 · 우아한 밤",
+    blurb: "themes.blurbs.palenight",
     group: G.blue,
     xterm: {
       background: "#292d3e", foreground: "#bfc7d5",
@@ -311,7 +312,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "oceanic-next": {
     name: "oceanic-next",
     displayName: "Oceanic Next",
-    blurb: "깊은 티일 · 마린 클래식 (base16)",
+    blurb: "themes.blurbs.oceanic-next",
     group: G.blue,
     xterm: {
       background: "#1b2b34", foreground: "#d8dee9",
@@ -332,7 +333,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "material-darker": {
     name: "material-darker",
     displayName: "Material Darker",
-    blurb: "거의 순수 블랙 · 머티리얼 팔레트",
+    blurb: "themes.blurbs.material-darker",
     group: G.blue,
     xterm: {
       background: "#212121", foreground: "#eeffff",
@@ -354,7 +355,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "rose-pine-moon": {
     name: "rose-pine-moon",
     displayName: "Rosé Pine Moon",
-    blurb: "Soho 감성 · 뮤트한 모브",
+    blurb: "themes.blurbs.rose-pine-moon",
     group: G.impact,
     xterm: {
       background: "#232136", foreground: "#e0def4",
@@ -375,7 +376,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "synthwave-84": {
     name: "synthwave-84",
     displayName: "Synthwave '84",
-    blurb: "80년대 레트로 네온 · 바이브",
+    blurb: "themes.blurbs.synthwave-84",
     group: G.impact,
     xterm: {
       background: "#262335", foreground: "#ffffff",
@@ -396,7 +397,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "cobalt2": {
     name: "cobalt2",
     displayName: "Cobalt2",
-    blurb: "Wes Bos · 진한 코발트 블루",
+    blurb: "themes.blurbs.cobalt2",
     group: G.impact,
     xterm: {
       background: "#132738", foreground: "#ffffff",
@@ -417,7 +418,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "shades-of-purple": {
     name: "shades-of-purple",
     displayName: "Shades of Purple",
-    blurb: "진한 로얄 퍼플 · 펀치 있는 시그니처",
+    blurb: "themes.blurbs.shades-of-purple",
     group: G.impact,
     xterm: {
       background: "#2d2b55", foreground: "#ffffff",
@@ -439,7 +440,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "homebrew": {
     name: "homebrew",
     displayName: "Homebrew",
-    blurb: "macOS 터미널 기본 · 해커 그린",
+    blurb: "themes.blurbs.homebrew",
     group: G.mac,
     xterm: {
       background: "#000000", foreground: "#00ff00",
@@ -460,7 +461,7 @@ export const THEMES: Record<string, TerminalTheme> = {
   "pro-macos": {
     name: "pro-macos",
     displayName: "Pro (macOS)",
-    blurb: "macOS Terminal.app 기본 · 순 블랙",
+    blurb: "themes.blurbs.pro-macos",
     group: G.mac,
     xterm: {
       background: "#000000", foreground: "#f2f2f2",

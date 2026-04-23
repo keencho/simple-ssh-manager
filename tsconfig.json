@@ -6,9 +6,11 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    "types": ["svelte"]
   },
-  "include": ["src"]
+  "include": ["src", "src/**/*.svelte"]
 }

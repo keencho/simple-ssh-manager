@@ -1,0 +1,362 @@
+{
+  "common": {
+    "ok": "확인",
+    "cancel": "취소"
+  },
+  "settings": {
+    "title": "설정",
+    "close": "닫기",
+    "nav": {
+      "font": "폰트",
+      "theme": "테마",
+      "layout": "외관",
+      "log": "로그",
+      "data": "데이터"
+    },
+    "font": {
+      "title": "폰트",
+      "subtitle": "선택하면 열려있는 모든 터미널에 즉시 적용됩니다. 설치되지 않은 폰트는 대체 폰트로 렌더됩니다.",
+      "optgroup": {
+        "bundled": "✓ 번들됨 (항상 사용 가능)",
+        "installed": "✓ 시스템에 설치됨",
+        "missing": "⚠ 미설치"
+      },
+      "status": {
+        "bundled": "✓ 번들됨 — \"{name}\" (항상 사용 가능)",
+        "installed": "✓ 시스템 설치됨 — \"{name}\"",
+        "cdnPreview": "🌐 온라인 프리뷰 (Google Fonts) — 오프라인 사용하려면 설치 필요",
+        "fallback": "⚠ \"{primary}\" 미설치 — 실제 렌더: \"{actual}\"",
+        "fallbackDefault": "⚠ \"{primary}\" 미설치 — 시스템 기본 monospace로 렌더"
+      },
+      "installBtn": "공식 다운로드 ↗",
+      "errors": {
+        "apply": "폰트 적용 실패: {error}",
+        "openLink": "링크 열기 실패: {error}"
+      }
+    },
+    "theme": {
+      "title": "터미널 테마",
+      "subtitle": "랭킹 순 · 선택하면 열려있는 모든 터미널에 즉시 적용됩니다.",
+      "errors": {
+        "apply": "테마 적용 실패: {error}"
+      }
+    },
+    "layout": {
+      "title": "외관",
+      "subtitle": "사이드바 위치를 지정합니다. 숨김/펼침은 사이드바 상단의 화살표 버튼으로 언제든 토글할 수 있습니다.",
+      "sidebarPos": {
+        "left": "왼쪽",
+        "right": "오른쪽"
+      },
+      "language": {
+        "title": "언어",
+        "subtitle": "언어 변경은 즉시 적용됩니다. 열려있는 터미널은 영향받지 않습니다.",
+        "en": "English",
+        "ko": "한국어"
+      }
+    },
+    "log": {
+      "title": "로그",
+      "subtitle": "앱 동작 로그와 (verbose 모드) SSH 접속 디버그 로그가 저장되는 위치입니다.",
+      "folderLabel": "로그 폴더",
+      "openFolder": "폴더 열기",
+      "changeDir": "경로 변경",
+      "resetDir": "기본값",
+      "clearAll": "전체 삭제",
+      "verboseLabel": "SSH Verbose 디버그 로그",
+      "verboseToggle": "연결 시 ssh에 <code>-vv</code> + <code>-E '{'로그폴더'}'/ssh-*.log</code> 추가",
+      "verboseHint": "Permission denied / 알고리즘 불일치 등 접속 실패 원인을 파악할 때 켜세요. 세션마다 별도 파일이 생성됩니다.",
+      "dialog": {
+        "changeFolder": "로그 폴더 선택",
+        "deleteConfirm": {
+          "title": "로그 삭제",
+          "body": "로그 폴더의 모든 *.log 파일을 삭제합니다.\n{path}"
+        },
+        "deleted": "{count}개 로그 파일을 삭제했습니다."
+      },
+      "errors": {
+        "openFolder": "폴더 열기 실패: {error}",
+        "changeDir": "경로 변경 실패: {error}",
+        "resetDir": "기본값 설정 실패: {error}",
+        "clear": "로그 삭제 실패: {error}",
+        "verbose": "설정 실패: {error}"
+      }
+    },
+    "data": {
+      "title": "데이터",
+      "subtitle": "세션과 폴더 정보는 JSON 파일 하나로 관리됩니다. 백업, 다른 기기로 이전, 경로 변경이 가능합니다.",
+      "currentFile": "현재 데이터 파일",
+      "openFolder": "폴더 열기",
+      "changeFile": "다른 파일 사용",
+      "resetFile": "기본값",
+      "changeHint": "다른 파일을 지정하면 이후 저장/불러오기가 그 파일로 갑니다. JSON 양식이 맞지 않으면 지정되지 않습니다.",
+      "exportImport": "내보내기 / 가져오기",
+      "export": "내보내기 (JSON)",
+      "import": "가져오기 (JSON)",
+      "exportImportHint": "내보내기는 현재 데이터의 복사본을 저장합니다. 가져오기는 현재 세션/폴더를 <strong>모두 대체</strong>합니다.",
+      "dialog": {
+        "changeFile": "데이터 JSON 파일 선택",
+        "importFile": "가져올 JSON 파일 선택",
+        "exported": "내보내기 완료\n{path}",
+        "importConfirm": {
+          "title": "가져오기",
+          "body": "현재 세션/폴더가 모두 대체됩니다. 계속할까요?"
+        },
+        "imported": "가져오기 완료. 사이드바가 새로고침되었습니다."
+      },
+      "errors": {
+        "openFolder": "폴더 열기 실패: {error}",
+        "changeFile": "경로 변경 실패: {error}",
+        "resetFile": "기본값 설정 실패: {error}",
+        "export": "내보내기 실패: {error}",
+        "import": "가져오기 실패: {error}"
+      }
+    }
+  },
+  "modal": {
+    "session": {
+      "title": {
+        "add": "세션 추가",
+        "edit": "세션 편집"
+      },
+      "fields": {
+        "name": "이름",
+        "namePlaceholder": "서버 이름",
+        "host": "Host",
+        "hostPlaceholder": "IP 또는 hostname",
+        "port": "Port",
+        "user": "User",
+        "userPlaceholder": "ec2-user",
+        "keyfile": "Key File",
+        "keyfilePlaceholder": "SSH key 경로",
+        "browse": "찾기",
+        "folder": "폴더",
+        "folderUncategorized": "(미분류)"
+      },
+      "jump": {
+        "toggle": "Jump Host 사용",
+        "host": "Jump Host",
+        "hostPlaceholder": "Bastion IP",
+        "user": "Jump User",
+        "userPlaceholder": "ec2-user",
+        "keyfile": "Jump Key File",
+        "keyfilePlaceholder": "Bastion key 경로"
+      },
+      "auth": {
+        "label": "인증 방식",
+        "key": "Key 파일",
+        "password": "패스워드",
+        "passwordPlaceholder": "패스워드 입력",
+        "storePassword": "패스워드 저장",
+        "storePasswordHint": "OS 키체인에 안전하게 저장. 해제 시 매 연결마다 입력.",
+        "show": "패스워드 표시",
+        "hide": "패스워드 숨김"
+      },
+      "actions": {
+        "save": "저장"
+      },
+      "errors": {
+        "required": "이름, Host, User는 필수 항목입니다.",
+        "passwordRequired": "패스워드가 필요합니다.",
+        "save": "저장 실패: {error}"
+      }
+    },
+    "passwordPrompt": {
+      "title": "패스워드 입력",
+      "subtitle": "{user}@{host}",
+      "subtitleJump": "Jump host: {user}@{host}",
+      "placeholder": "패스워드 입력",
+      "ok": "연결",
+      "cancel": "취소"
+    }
+  },
+  "sidebar": {
+    "search": {
+      "placeholder": "검색..."
+    },
+    "stats": "{folders}개 폴더 / {sessions}개 세션",
+    "uncategorized": "미분류",
+    "empty": {
+      "noSessions": "세션을 추가해주세요",
+      "noResults": "검색 결과가 없습니다"
+    },
+    "folder": {
+      "addSession": "세션 추가",
+      "edit": "폴더 편집"
+    },
+    "actions": {
+      "addSession": "세션",
+      "addFolder": "폴더",
+      "newWindow": "새 창",
+      "newWindowTitle": "연결 시 기본적으로 새 창에서 열기",
+      "settings": "설정",
+      "refresh": "새로고침",
+      "hide": "사이드바 숨기기",
+      "show": "사이드바 열기"
+    },
+    "menu": {
+      "session": {
+        "connect": "연결",
+        "connectNewWindow": "새 창에서 연결",
+        "openSftp": "SFTP 열기",
+        "edit": "편집",
+        "duplicate": "복사",
+        "delete": "삭제"
+      },
+      "folder": {
+        "addSession": "세션 추가",
+        "edit": "폴더 편집",
+        "delete": "폴더 삭제"
+      }
+    },
+    "errors": {
+      "loadData": "데이터 로드 실패: {error}",
+      "connect": "연결 실패: {error}",
+      "deleteSession": "삭제 실패: {error}",
+      "createFolder": "폴더 생성 실패: {error}",
+      "deleteFolder": "폴더 삭제 실패: {error}",
+      "duplicate": "복사 실패: {error}",
+      "reorder": "순서 변경 실패: {error}"
+    },
+    "confirm": {
+      "deleteSession": {
+        "title": "세션 삭제",
+        "body": "\"{name}\" 세션을 삭제할까요?"
+      },
+      "deleteFolder": {
+        "title": "폴더 삭제",
+        "body": "\"{name}\" 폴더를 삭제할까요?\n(세션은 미분류로 이동됩니다)"
+      }
+    },
+    "prompt": {
+      "newFolder": "폴더 이름:",
+      "renameFolder": "폴더 이름 변경 (비우면 삭제):"
+    }
+  },
+  "welcome": {
+    "title": "서버에 연결하세요",
+    "body": "사이드바에서 세션을 <b>더블클릭</b>하여 연결하거나,<br>왼쪽 아래 <b>+ 세션</b> 버튼으로 새 서버를 추가하세요."
+  },
+  "sftp": {
+    "connecting": "연결 중...",
+    "connectFailed": "연결 실패: {error}",
+    "actions": {
+      "download": "다운로드",
+      "upload": "업로드",
+      "mkdir": "폴더",
+      "sortByTitle": "정렬",
+      "refresh": "새로고침"
+    },
+    "sortOptions": {
+      "type": "폴더순",
+      "name": "이름순",
+      "modified": "최근 수정순",
+      "modifiedAsc": "오래된순",
+      "size": "크기순"
+    },
+    "dropZone": "파일을 여기에 드래그하여 업로드",
+    "dialog": {
+      "saveTo": "저장할 폴더 선택"
+    },
+    "prompt": {
+      "folderName": "폴더 이름:",
+      "goto": "이동할 경로:"
+    },
+    "breadcrumb": {
+      "loading": "불러오는 중...",
+      "empty": "하위 폴더 없음",
+      "loadFailed": "로드 실패",
+      "gotoTitle": "경로 직접 입력"
+    },
+    "file": {
+      "downloadTitle": "다운로드",
+      "deleteTitle": "삭제"
+    },
+    "empty": "빈 디렉토리",
+    "confirm": {
+      "delete": {
+        "title": "삭제",
+        "body": "삭제할까요?\n{path}"
+      }
+    },
+    "errors": {
+      "loadDir": "디렉토리 로드 실패: {error}",
+      "download": "다운로드 실패: {error}",
+      "downloadName": "다운로드 실패: {name} - {error}",
+      "upload": "업로드 실패: {error}",
+      "createFolder": "폴더 생성 실패: {error}",
+      "delete": "삭제 실패: {error}"
+    }
+  },
+  "themes": {
+    "groups": {
+      "essentials": "모던 필수",
+      "classic": "클래식 · 뮤트",
+      "blue": "쿨 블루",
+      "impact": "임팩트 · 레트로",
+      "mac": "Mac 클래식"
+    },
+    "blurbs": {
+      "one-dark-pro": "VSCode 설치수 1위 · Atom 원조 다크",
+      "dracula": "파스텔 네온, 자주색 아이콘",
+      "github-dark": "거의 순수 블랙, 모던 · 기업",
+      "tokyo-night": "깊은 인디고 · 네온 액센트",
+      "catppuccin-mocha": "파스텔 · 2024-25 커뮤니티 급상승",
+      "gruvbox-dark": "따뜻한 중성 블랙 · 레트로 얼씨",
+      "solarized-dark": "Ethan Schoonover · 최다 이식 역사적 클래식",
+      "nord": "북극권 블루그레이 · 차분함의 대명사",
+      "monokai-pro": "따뜻한 회색 · 높은 대비 · 클래식",
+      "kanagawa": "호쿠사이 먹빛 · 성숙한 페인터리",
+      "night-owl": "Sarah Drasner · 접근성 튜닝된 네이비",
+      "ayu-dark": "블랙 + 티일 · 샤프하고 미니멀",
+      "palenight": "머티리얼 인디고 · 우아한 밤",
+      "oceanic-next": "깊은 티일 · 마린 클래식 (base16)",
+      "material-darker": "거의 순수 블랙 · 머티리얼 팔레트",
+      "rose-pine-moon": "Soho 감성 · 뮤트한 모브",
+      "synthwave-84": "80년대 레트로 네온 · 바이브",
+      "cobalt2": "Wes Bos · 진한 코발트 블루",
+      "shades-of-purple": "진한 로얄 퍼플 · 펀치 있는 시그니처",
+      "homebrew": "macOS 터미널 기본 · 해커 그린",
+      "pro-macos": "macOS Terminal.app 기본 · 순 블랙"
+    }
+  },
+  "terminal": {
+    "pane": {
+      "zoom": "전체화면 토글",
+      "close": "pane 닫기"
+    },
+    "tab": {
+      "close": "닫기",
+      "pullOutHint": "새 탭으로 빼내기"
+    },
+    "errors": {
+      "sessionEnded": "[세션 종료됨]",
+      "runFailed": "세션 실행 실패: {error}",
+      "splitFailed": "분할 실패: {error}"
+    },
+    "menu": {
+      "duplicateSameWindow": "같은 창에 탭 복제",
+      "duplicateNewWindow": "새 창에 탭 복제",
+      "splitVerticalSame": "세로로 분할 (같은 세션)",
+      "splitVerticalOther": "세로로 분할 (다른 세션...)",
+      "broadcastOff": "브로드캐스트 OFF",
+      "broadcastOn": "브로드캐스트 ON",
+      "closeTab": "탭 닫기",
+      "copy": "복사",
+      "copyNoSelection": " (선택 없음)",
+      "paste": "붙여넣기",
+      "sftpOpenWithCwd": "SFTP 열기 ({path})",
+      "sftpOpenHome": "SFTP 열기 (홈)",
+      "fullscreen": "전체화면",
+      "fullscreenExit": "전체화면 해제",
+      "closePane": "pane 닫기"
+    },
+    "picker": {
+      "title": "다른 세션으로 분할",
+      "close": "닫기",
+      "search": "검색...",
+      "uncategorized": "미분류",
+      "empty": "결과 없음"
+    }
+  }
+}

@@ -6,6 +6,7 @@ temp/
 .idea/
 
 PLAN.md
+docs/*
 taskbar_crop.png
 taskbar_crop_2x.png
 taskbar_screenshot.png

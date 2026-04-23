@@ -1,6 +1,6 @@
 [package]
 name = "simple-ssh-client"
-version = "1.0.1"
+version = "1.0.3"
 edition = "2021"
 
 [build-dependencies]
@@ -23,3 +23,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "net",
 async-trait = "0.1"
 portable-pty = "0.8"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }

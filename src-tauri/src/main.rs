@@ -16,12 +16,20 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 // --- Data Model ---
 
+fn default_auth_method() -> String { "key".to_string() }
+fn default_store_password() -> bool { true }
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct JumpHost {
     host: String,
     port: u16,
     user: String,
+    #[serde(default)]
     key_file: String,
+    #[serde(default = "default_auth_method")]
+    auth_method: String,        // "key" | "password"
+    #[serde(default = "default_store_password")]
+    store_password: bool,       // when method=password: persist in OS keyring
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -31,10 +39,15 @@ struct SshSession {
     host: String,
     port: u16,
     user: String,
+    #[serde(default)]
     key_file: String,
     folder_id: Option<String>,
     order: u32,
     jump_host: Option<JumpHost>,
+    #[serde(default = "default_auth_method")]
+    auth_method: String,        // "key" | "password"
+    #[serde(default = "default_store_password")]
+    store_password: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -86,6 +99,7 @@ struct SftpProgress {
 enum SftpCommand {
     ListDir { path: String, reply: tokio::sync::oneshot::Sender<Result<Vec<RemoteEntry>, String>> },
     Upload { local_path: String, remote_dir: String, app: AppHandle, session_id: String, reply: tokio::sync::oneshot::Sender<Result<(), String>> },
+    UploadBytes { remote_dir: String, filename: String, data: Vec<u8>, app: AppHandle, session_id: String, reply: tokio::sync::oneshot::Sender<Result<(), String>> },
     Download { remote_path: String, local_path: String, app: AppHandle, session_id: String, reply: tokio::sync::oneshot::Sender<Result<(), String>> },
     Mkdir { path: String, reply: tokio::sync::oneshot::Sender<Result<(), String>> },
     Delete { path: String, is_dir: bool, reply: tokio::sync::oneshot::Sender<Result<(), String>> },
@@ -96,10 +110,24 @@ struct SftpHandle {
     tx: tokio::sync::mpsc::Sender<SftpCommand>,
 }
 
-struct PtyInstance {
-    master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
-    writer: Mutex<Box<dyn Write + Send>>,
-    child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
+enum RusshShellCmd {
+    Write(Vec<u8>),
+    Resize { rows: u16, cols: u16 },
+    Kill,
+}
+
+enum PtyInstance {
+    /// Child `ssh.exe` process driving a local pseudoterminal (key auth path).
+    Cli {
+        master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
+        writer: Mutex<Box<dyn Write + Send>>,
+        child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
+    },
+    /// In-process russh client with a shell channel (password auth path).
+    /// Worker task owns the channel and serves write/resize/kill via mpsc.
+    Russh {
+        tx: tokio::sync::mpsc::UnboundedSender<RusshShellCmd>,
+    },
 }
 
 #[derive(Clone, Serialize)]
@@ -130,7 +158,48 @@ struct AppState {
     sftp_connections: Mutex<HashMap<String, SftpHandle>>,
     ptys: Mutex<HashMap<String, Arc<PtyInstance>>>,
     pending_tabs: Mutex<HashMap<String, AddTabPayload>>,
+    // Per-session password cache for sessions with store_password=false.
+    // Key format: session_id (target) or "{session_id}:jump" (jump host).
+    // Cleared when a connection error suggests a stale password.
+    password_cache: Mutex<HashMap<String, String>>,
     runtime: tokio::runtime::Runtime,
+}
+
+// --- Keyring helpers (OS-level secure password storage) ---
+
+const KEYRING_SERVICE: &str = "simple-ssh-client";
+
+fn keyring_account(session_id: &str, is_jump: bool) -> String {
+    if is_jump { format!("{}:jump", session_id) } else { session_id.to_string() }
+}
+
+fn keyring_set(session_id: &str, is_jump: bool, password: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, &keyring_account(session_id, is_jump))
+        .map_err(|e| format!("keyring entry: {}", e))?;
+    entry.set_password(password)
+        .map_err(|e| format!("keyring set: {}", e))
+}
+
+fn keyring_get(session_id: &str, is_jump: bool) -> Option<String> {
+    keyring::Entry::new(KEYRING_SERVICE, &keyring_account(session_id, is_jump)).ok()
+        .and_then(|e| e.get_password().ok())
+}
+
+fn keyring_delete(session_id: &str, is_jump: bool) {
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &keyring_account(session_id, is_jump)) {
+        let _ = entry.delete_credential();
+    }
+}
+
+/// Resolve password for a session (target or jump host).
+/// store_password=true → keyring lookup. store_password=false → memory cache.
+fn resolve_password(state: &AppState, session_id: &str, is_jump: bool, store: bool) -> Option<String> {
+    let key = keyring_account(session_id, is_jump);
+    if store {
+        keyring_get(session_id, is_jump)
+    } else {
+        state.password_cache.lock().unwrap().get(&key).cloned()
+    }
 }
 
 fn format_permissions(mode: u32) -> String {
@@ -159,6 +228,34 @@ fn load_key_pair(path: &str) -> Result<Arc<russh_keys::PrivateKey>, String> {
     let key = russh_keys::load_secret_key(path, None)
         .map_err(|e| format!("Failed to load key '{}': {}", path, e))?;
     Ok(Arc::new(key))
+}
+
+/// Password auth with automatic keyboard-interactive fallback.
+/// Many OpenSSH/PAM setups advertise "password" but only accept the value via
+/// the keyboard-interactive challenge; we transparently feed the same string.
+async fn try_auth_password(handle: &mut russh::client::Handle<SshClientHandler>, user: &str, password: &str) -> Result<(), String> {
+    // 1) Plain password
+    if let Ok(true) = handle.authenticate_password(user, password).await {
+        return Ok(());
+    }
+    // 2) Keyboard-interactive — answer every prompt with the same password
+    use russh::client::KeyboardInteractiveAuthResponse;
+    let mut state = handle.authenticate_keyboard_interactive_start(user, None).await
+        .map_err(|e| format!("kbd-interactive start failed: {}", e))?;
+    for _ in 0..16 {
+        match state {
+            KeyboardInteractiveAuthResponse::Success => return Ok(()),
+            KeyboardInteractiveAuthResponse::Failure { .. } => {
+                return Err("Password rejected".to_string());
+            }
+            KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                let responses: Vec<String> = prompts.iter().map(|_| password.to_string()).collect();
+                state = handle.authenticate_keyboard_interactive_respond(responses).await
+                    .map_err(|e| format!("kbd-interactive respond failed: {}", e))?;
+            }
+        }
+    }
+    Err("kbd-interactive: too many prompts".to_string())
 }
 
 async fn try_auth(handle: &mut russh::client::Handle<SshClientHandler>, user: &str, key: &Arc<russh_keys::PrivateKey>) -> Result<(), String> {
@@ -190,11 +287,34 @@ async fn try_auth(handle: &mut russh::client::Handle<SshClientHandler>, user: &s
     Err("Auth rejected - all key algorithms tried".to_string())
 }
 
-async fn connect_sftp(session: &SshSession, config: Arc<russh::client::Config>) -> Result<(russh_sftp::client::SftpSession, Option<russh::client::Handle<SshClientHandler>>, russh::client::Handle<SshClientHandler>), String> {
-    let (jump_handle, target_handle);
+/// Authenticate a russh handle using either a key file or a password,
+/// based on the `auth_method` field. Used for both target and jump hosts.
+async fn auth_dispatch(
+    handle: &mut russh::client::Handle<SshClientHandler>,
+    user: &str,
+    auth_method: &str,
+    key_file: &str,
+    password: Option<&str>,
+) -> Result<(), String> {
+    if auth_method == "password" {
+        let pwd = password.ok_or_else(|| "Password not provided".to_string())?;
+        try_auth_password(handle, user, pwd).await
+    } else {
+        let key = load_key_pair(key_file)?;
+        try_auth(handle, user, &key).await
+    }
+}
 
+/// Open authenticated russh handles for the session (and jump host if any).
+/// Returns (jump_handle?, target_handle). The jump handle must be kept alive
+/// for the duration of the target session — drop it and the tunnel collapses.
+async fn connect_handles(
+    session: &SshSession,
+    config: Arc<russh::client::Config>,
+    target_password: Option<String>,
+    jump_password: Option<String>,
+) -> Result<(Option<russh::client::Handle<SshClientHandler>>, russh::client::Handle<SshClientHandler>), String> {
     if let Some(jump) = &session.jump_host {
-        let jump_key = load_key_pair(&jump.key_file)?;
         let mut jh = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             russh::client::connect(config.clone(), (jump.host.as_str(), jump.port), SshClientHandler)
@@ -202,13 +322,12 @@ async fn connect_sftp(session: &SshSession, config: Arc<russh::client::Config>) 
             .map_err(|_| format!("Jump host timeout: {}:{}", jump.host, jump.port))?
             .map_err(|e| format!("Jump host failed: {}", e))?;
 
-        try_auth(&mut jh, &jump.user, &jump_key).await
+        auth_dispatch(&mut jh, &jump.user, &jump.auth_method, &jump.key_file, jump_password.as_deref()).await
             .map_err(|e| format!("Jump host: {}", e))?;
 
         let channel = jh.channel_open_direct_tcpip(&session.host, session.port as u32, "127.0.0.1", 0).await
             .map_err(|e| format!("Tunnel failed: {}", e))?;
 
-        let target_key = load_key_pair(&session.key_file)?;
         let mut th = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             russh::client::connect_stream(config, channel.into_stream(), SshClientHandler)
@@ -216,13 +335,11 @@ async fn connect_sftp(session: &SshSession, config: Arc<russh::client::Config>) 
             .map_err(|_| "Target timeout via jump".to_string())?
             .map_err(|e| format!("Target failed: {}", e))?;
 
-        try_auth(&mut th, &session.user, &target_key).await
+        auth_dispatch(&mut th, &session.user, &session.auth_method, &session.key_file, target_password.as_deref()).await
             .map_err(|e| format!("Target: {}", e))?;
 
-        jump_handle = Some(jh);
-        target_handle = th;
+        Ok((Some(jh), th))
     } else {
-        let key = load_key_pair(&session.key_file)?;
         let mut h = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             russh::client::connect(config, (session.host.as_str(), session.port), SshClientHandler)
@@ -230,11 +347,19 @@ async fn connect_sftp(session: &SshSession, config: Arc<russh::client::Config>) 
             .map_err(|_| format!("Connection timeout: {}:{}", session.host, session.port))?
             .map_err(|e| format!("Connection failed: {}", e))?;
 
-        try_auth(&mut h, &session.user, &key).await?;
+        auth_dispatch(&mut h, &session.user, &session.auth_method, &session.key_file, target_password.as_deref()).await?;
 
-        jump_handle = None;
-        target_handle = h;
+        Ok((None, h))
     }
+}
+
+async fn connect_sftp(
+    session: &SshSession,
+    config: Arc<russh::client::Config>,
+    target_password: Option<String>,
+    jump_password: Option<String>,
+) -> Result<(russh_sftp::client::SftpSession, Option<russh::client::Handle<SshClientHandler>>, russh::client::Handle<SshClientHandler>), String> {
+    let (jump_handle, target_handle) = connect_handles(session, config, target_password, jump_password).await?;
 
     // Small delay to let the server process auth before opening channel
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -281,10 +406,17 @@ async fn list_dir_impl(sftp: &russh_sftp::client::SftpSession, path: &str) -> Re
 async fn upload_impl(sftp: &russh_sftp::client::SftpSession, local_path: &str, remote_dir: &str, app: &AppHandle, session_id: &str) -> Result<(), String> {
     let local = std::path::Path::new(local_path);
     let filename = local.file_name().ok_or("Invalid filename")?.to_string_lossy().to_string();
-    let remote_path = format!("{}/{}", remote_dir.trim_end_matches('/'), filename);
-
     let local_data = fs::read(local_path).map_err(|e| e.to_string())?;
-    let total_bytes = local_data.len() as u64;
+    write_bytes_impl(sftp, remote_dir, &filename, &local_data, app, session_id).await
+}
+
+async fn upload_bytes_impl(sftp: &russh_sftp::client::SftpSession, remote_dir: &str, filename: &str, data: &[u8], app: &AppHandle, session_id: &str) -> Result<(), String> {
+    write_bytes_impl(sftp, remote_dir, filename, data, app, session_id).await
+}
+
+async fn write_bytes_impl(sftp: &russh_sftp::client::SftpSession, remote_dir: &str, filename: &str, data: &[u8], app: &AppHandle, session_id: &str) -> Result<(), String> {
+    let remote_path = format!("{}/{}", remote_dir.trim_end_matches('/'), filename);
+    let total_bytes = data.len() as u64;
 
     let mut remote_file = sftp.create(&remote_path).await
         .map_err(|e| format!("Create failed: {}", e))?;
@@ -292,11 +424,11 @@ async fn upload_impl(sftp: &russh_sftp::client::SftpSession, local_path: &str, r
     use tokio::io::AsyncWriteExt;
     let chunk_size = 32768;
     let mut transferred: u64 = 0;
-    for chunk in local_data.chunks(chunk_size) {
+    for chunk in data.chunks(chunk_size) {
         remote_file.write_all(chunk).await.map_err(|e| e.to_string())?;
         transferred += chunk.len() as u64;
         let _ = app.emit("sftp-progress", SftpProgress {
-            session_id: session_id.to_string(), filename: filename.clone(),
+            session_id: session_id.to_string(), filename: filename.to_string(),
             bytes_transferred: transferred, total_bytes, direction: "upload".to_string(),
         });
     }
@@ -414,6 +546,12 @@ fn log_app(level: &str, msg: &str) {
 }
 
 fn build_ssh_args(session: &SshSession) -> Vec<String> {
+    // Password-auth sessions don't shell out to ssh.exe — they go through the
+    // in-process russh shell path. Returning an empty vec signals that path
+    // to pty_spawn (which then uses session_id to look up the session).
+    if session.auth_method == "password" {
+        return Vec::new();
+    }
     let cfg = load_config();
     let verbose = cfg.ssh_verbose.unwrap_or(false);
     let mut args: Vec<String> = Vec::new();
@@ -425,6 +563,15 @@ fn build_ssh_args(session: &SshSession) -> Vec<String> {
     args.push("PubkeyAcceptedAlgorithms=+ssh-rsa".to_string());
     args.push("-o".to_string());
     args.push("HostKeyAlgorithms=+ssh-rsa".to_string());
+    // Keep idle connections alive: send a keepalive every 60s, drop after 3
+    // consecutive missed responses (~3 min). Prevents NAT/firewall timeouts
+    // from closing the session as "client_loop: send disconnect: Connection reset".
+    args.push("-o".to_string());
+    args.push("ServerAliveInterval=60".to_string());
+    args.push("-o".to_string());
+    args.push("ServerAliveCountMax=3".to_string());
+    args.push("-o".to_string());
+    args.push("TCPKeepAlive=yes".to_string());
     if verbose {
         // -vv writes debug output to stderr, which the PTY merges into the
         // terminal view so the user actually sees "Permission denied" and
@@ -436,7 +583,7 @@ fn build_ssh_args(session: &SshSession) -> Vec<String> {
     if let Some(jump) = &session.jump_host {
         args.push("-o".to_string());
         args.push(format!(
-            "ProxyCommand=ssh -o PubkeyAcceptedAlgorithms=+ssh-rsa -o HostKeyAlgorithms=+ssh-rsa -i \"{}\" -W %h:%p -p {} {}@{}",
+            "ProxyCommand=ssh -o PubkeyAcceptedAlgorithms=+ssh-rsa -o HostKeyAlgorithms=+ssh-rsa -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o TCPKeepAlive=yes -i \"{}\" -W %h:%p -p {} {}@{}",
             jump.key_file, jump.port, jump.user, jump.host
         ));
     }
@@ -455,29 +602,128 @@ fn build_ssh_args(session: &SshSession) -> Vec<String> {
 #[tauri::command]
 fn get_all_data() -> Result<SessionsData, String> { load_data() }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
-fn create_session(name: String, host: String, port: u16, user: String, key_file: String, folder_id: Option<String>, jump_host: Option<JumpHost>) -> Result<SessionsData, String> {
+fn create_session(
+    name: String,
+    host: String,
+    port: u16,
+    user: String,
+    key_file: String,
+    folder_id: Option<String>,
+    jump_host: Option<JumpHost>,
+    auth_method: String,
+    store_password: bool,
+    password: Option<String>,
+    jump_password: Option<String>,
+    state: State<AppState>,
+) -> Result<SessionsData, String> {
     let mut data = load_data()?;
     let max_order = data.sessions.iter().filter(|s| s.folder_id == folder_id).map(|s| s.order).max().unwrap_or(0);
-    data.sessions.push(SshSession { id: Uuid::new_v4().to_string(), name, host, port, user, key_file, folder_id, order: max_order + 1, jump_host });
+    let id = Uuid::new_v4().to_string();
+    let new_session = SshSession {
+        id: id.clone(),
+        name, host, port, user, key_file, folder_id,
+        order: max_order + 1,
+        jump_host: jump_host.clone(),
+        auth_method: auth_method.clone(),
+        store_password,
+    };
+    persist_password_for_session(&state, &id, &new_session, password.as_deref(), jump_password.as_deref())?;
+    data.sessions.push(new_session);
     save_data(&data)?;
     Ok(data)
 }
 
 #[tauri::command]
-fn update_session(session: SshSession) -> Result<SessionsData, String> {
+fn update_session(session: SshSession, password: Option<String>, jump_password: Option<String>, state: State<AppState>) -> Result<SessionsData, String> {
     let mut data = load_data()?;
+    let prev = data.sessions.iter().find(|s| s.id == session.id).cloned();
+
+    // If switching auth methods or store_password setting, clean up the old credential.
+    if let Some(p) = &prev {
+        // Target side
+        if p.auth_method == "password" && (session.auth_method != "password") {
+            keyring_delete(&session.id, false);
+            state.password_cache.lock().unwrap().remove(&session.id);
+        } else if p.auth_method == "password" && p.store_password && !session.store_password {
+            // store→don't store: drop keyring entry
+            keyring_delete(&session.id, false);
+        } else if p.auth_method == "password" && !p.store_password && session.store_password {
+            // don't store→store: drop in-memory cache (will be re-saved below if password provided)
+            state.password_cache.lock().unwrap().remove(&session.id);
+        }
+        // Jump side
+        let prev_jump = p.jump_host.as_ref();
+        let new_jump = session.jump_host.as_ref();
+        let jump_key = format!("{}:jump", session.id);
+        let prev_was_pwd = matches!(prev_jump, Some(j) if j.auth_method == "password");
+        let new_is_pwd = matches!(new_jump, Some(j) if j.auth_method == "password");
+        if prev_was_pwd && !new_is_pwd {
+            keyring_delete(&session.id, true);
+            state.password_cache.lock().unwrap().remove(&jump_key);
+        } else if let (Some(pj), Some(nj)) = (prev_jump, new_jump) {
+            if pj.auth_method == "password" && pj.store_password && nj.auth_method == "password" && !nj.store_password {
+                keyring_delete(&session.id, true);
+            } else if pj.auth_method == "password" && !pj.store_password && nj.auth_method == "password" && nj.store_password {
+                state.password_cache.lock().unwrap().remove(&jump_key);
+            }
+        }
+    }
+
+    persist_password_for_session(&state, &session.id, &session, password.as_deref(), jump_password.as_deref())?;
+
     if let Some(existing) = data.sessions.iter_mut().find(|s| s.id == session.id) { *existing = session; }
     save_data(&data)?;
     Ok(data)
 }
 
 #[tauri::command]
-fn delete_session(id: String) -> Result<SessionsData, String> {
+fn delete_session(id: String, state: State<AppState>) -> Result<SessionsData, String> {
     let mut data = load_data()?;
     data.sessions.retain(|s| s.id != id);
+    // Always wipe associated credentials (cheap, idempotent).
+    keyring_delete(&id, false);
+    keyring_delete(&id, true);
+    {
+        let mut cache = state.password_cache.lock().unwrap();
+        cache.remove(&id);
+        cache.remove(&format!("{}:jump", id));
+    }
     save_data(&data)?;
     Ok(data)
+}
+
+/// Save (or omit) password for a freshly created/updated session.
+/// store_password=true → keyring; false → memory cache (only if value provided).
+fn persist_password_for_session(
+    state: &AppState,
+    session_id: &str,
+    session: &SshSession,
+    password: Option<&str>,
+    jump_password: Option<&str>,
+) -> Result<(), String> {
+    if session.auth_method == "password" {
+        if let Some(p) = password {
+            if session.store_password {
+                keyring_set(session_id, false, p)?;
+            } else {
+                state.password_cache.lock().unwrap().insert(session_id.to_string(), p.to_string());
+            }
+        }
+    }
+    if let Some(jump) = &session.jump_host {
+        if jump.auth_method == "password" {
+            if let Some(p) = jump_password {
+                if jump.store_password {
+                    keyring_set(session_id, true, p)?;
+                } else {
+                    state.password_cache.lock().unwrap().insert(format!("{}:jump", session_id), p.to_string());
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -518,8 +764,22 @@ fn copy_session(id: String) -> Result<SessionsData, String> {
             s.order += 1;
         }
     }
+    let new_id = Uuid::new_v4().to_string();
+    // Copy keyring entries too so a duplicated session can connect immediately.
+    if original.auth_method == "password" && original.store_password {
+        if let Some(pwd) = keyring_get(&original.id, false) {
+            let _ = keyring_set(&new_id, false, &pwd);
+        }
+    }
+    if let Some(jump) = &original.jump_host {
+        if jump.auth_method == "password" && jump.store_password {
+            if let Some(pwd) = keyring_get(&original.id, true) {
+                let _ = keyring_set(&new_id, true, &pwd);
+            }
+        }
+    }
     data.sessions.push(SshSession {
-        id: Uuid::new_v4().to_string(),
+        id: new_id,
         name: format!("{} (복사)", original.name),
         host: original.host,
         port: original.port,
@@ -528,6 +788,8 @@ fn copy_session(id: String) -> Result<SessionsData, String> {
         folder_id: original.folder_id,
         order: original.order + 1,
         jump_host: original.jump_host,
+        auth_method: original.auth_method,
+        store_password: original.store_password,
     });
     save_data(&data)?;
     Ok(data)
@@ -556,6 +818,20 @@ fn reorder_folders(folders: Vec<Folder>, root_folder_order: Option<u32>) -> Resu
     Ok(data)
 }
 
+/// Apply key permissions fix only when the session uses key auth (and same for
+/// jump). Skips entirely for password sessions to avoid touching unrelated paths.
+fn fix_key_permissions_if_needed(session: &SshSession) -> Result<(), String> {
+    if session.auth_method == "key" {
+        fix_key_permissions(&session.key_file)?;
+    }
+    if let Some(jump) = &session.jump_host {
+        if jump.auth_method == "key" {
+            fix_key_permissions(&jump.key_file)?;
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn fix_key_permissions(key_path: &str) -> Result<(), String> {
     use std::process::Command;
@@ -579,17 +855,24 @@ fn fix_key_permissions(key_path: &str) -> Result<(), String> {
 async fn open_ssh(id: String, new_window: bool, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let data = load_data()?;
     let session = data.sessions.iter().find(|s| s.id == id).cloned().ok_or("Session not found")?;
-    fix_key_permissions(&session.key_file)?;
-    if let Some(jump) = &session.jump_host { fix_key_permissions(&jump.key_file)?; }
+    fix_key_permissions_if_needed(&session)?;
 
-    let folder_name = session.folder_id.as_ref()
+    // Backend can't know the user's language — emit a placeholder token for the
+    // uncategorized prefix and let the frontend swap it via i18n.
+    let folder_name_opt = session.folder_id.as_ref()
         .and_then(|fid| data.folders.iter().find(|f| f.id == *fid))
-        .map(|f| f.name.clone())
-        .unwrap_or_else(|| "미분류".to_string());
-    let title = format!("{}:{}", folder_name, session.name);
+        .map(|f| f.name.clone());
+    let payload_title = match &folder_name_opt {
+        Some(f) => format!("{}:{}", f, session.name),
+        None => format!("__UNCATEGORIZED__:{}", session.name),
+    };
+    let window_title = match &folder_name_opt {
+        Some(f) => format!("{}:{}", f, session.name),
+        None => session.name.clone(),
+    };
     let ssh_args = build_ssh_args(&session);
     let terminal_id = Uuid::new_v4().to_string();
-    let payload = AddTabPayload { terminal_id, title: title.clone(), ssh_args, session_id: Some(session.id.clone()), adopt: false, initial_content: String::new() };
+    let payload = AddTabPayload { terminal_id, title: payload_title, ssh_args, session_id: Some(session.id.clone()), adopt: false, initial_content: String::new() };
 
     let existing_label = if new_window {
         None
@@ -615,10 +898,11 @@ async fn open_ssh(id: String, new_window: bool, app: AppHandle, state: State<'_,
         let label = format!("term-{}", Uuid::new_v4().simple());
         state.pending_tabs.lock().unwrap().insert(label.clone(), payload);
         let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
-            .title(title.clone())
+            .title(window_title.clone())
             .inner_size(1100.0, 720.0)
             .min_inner_size(640.0, 400.0)
-            .resizable(true);
+            .resizable(true)
+            .disable_drag_drop_handler();
         builder.build().map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -627,6 +911,87 @@ async fn open_ssh(id: String, new_window: bool, app: AppHandle, state: State<'_,
 #[tauri::command]
 fn pty_take_pending(window_label: String, state: State<AppState>) -> Option<AddTabPayload> {
     state.pending_tabs.lock().unwrap().remove(&window_label)
+}
+
+/// Returns which password slots a session needs prompted for, given its
+/// current credential state. Frontend calls this before connect; if non-empty,
+/// it shows a prompt for each slot then calls `set_session_password` and
+/// retries connect.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct PasswordNeed {
+    /// "target" or "jump"
+    slot: String,
+    user: String,
+    host: String,
+}
+
+#[tauri::command]
+fn check_session_password_needs(session_id: String, state: State<AppState>) -> Result<Vec<PasswordNeed>, String> {
+    let data = load_data()?;
+    let session = data.sessions.iter().find(|s| s.id == session_id).ok_or("Session not found")?.clone();
+    let mut needs = Vec::new();
+
+    if session.auth_method == "password" {
+        let have = if session.store_password {
+            keyring_get(&session_id, false).is_some()
+        } else {
+            state.password_cache.lock().unwrap().contains_key(&session_id)
+        };
+        if !have {
+            needs.push(PasswordNeed { slot: "target".into(), user: session.user.clone(), host: session.host.clone() });
+        }
+    }
+    if let Some(jump) = &session.jump_host {
+        if jump.auth_method == "password" {
+            let key = format!("{}:jump", session_id);
+            let have = if jump.store_password {
+                keyring_get(&session_id, true).is_some()
+            } else {
+                state.password_cache.lock().unwrap().contains_key(&key)
+            };
+            if !have {
+                needs.push(PasswordNeed { slot: "jump".into(), user: jump.user.clone(), host: jump.host.clone() });
+            }
+        }
+    }
+    Ok(needs)
+}
+
+/// Stash a password in the appropriate slot (keyring if store=true, memory otherwise).
+/// Used by the connect-time prompt flow for sessions without a saved password.
+#[tauri::command]
+fn set_session_password(
+    session_id: String,
+    slot: String,
+    password: String,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let data = load_data()?;
+    let session = data.sessions.iter().find(|s| s.id == session_id).ok_or("Session not found")?;
+    let is_jump = slot == "jump";
+    let store = if is_jump {
+        session.jump_host.as_ref().map(|j| j.store_password).unwrap_or(true)
+    } else {
+        session.store_password
+    };
+    if store {
+        keyring_set(&session_id, is_jump, &password)?;
+    } else {
+        let key = if is_jump { format!("{}:jump", session_id) } else { session_id.clone() };
+        state.password_cache.lock().unwrap().insert(key, password);
+    }
+    Ok(())
+}
+
+/// Forget a cached/saved password (e.g. after auth rejection so the next
+/// attempt re-prompts the user instead of silently retrying with stale creds).
+#[tauri::command]
+fn clear_session_password(session_id: String, slot: String, state: State<AppState>) -> Result<(), String> {
+    let is_jump = slot == "jump";
+    keyring_delete(&session_id, is_jump);
+    let key = if is_jump { format!("{}:jump", session_id) } else { session_id.clone() };
+    state.password_cache.lock().unwrap().remove(&key);
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -639,14 +1004,14 @@ struct SessionArgs {
 fn get_ssh_args_for_session(id: String) -> Result<SessionArgs, String> {
     let data = load_data()?;
     let session = data.sessions.iter().find(|s| s.id == id).ok_or("Session not found")?;
-    fix_key_permissions(&session.key_file)?;
-    if let Some(jump) = &session.jump_host { fix_key_permissions(&jump.key_file)?; }
-    let folder_name = session.folder_id.as_ref()
+    fix_key_permissions_if_needed(session)?;
+    // Same placeholder pattern as open_ssh — frontend resolves __UNCATEGORIZED__.
+    let title = session.folder_id.as_ref()
         .and_then(|fid| data.folders.iter().find(|f| f.id == *fid))
-        .map(|f| f.name.clone())
-        .unwrap_or_else(|| "미분류".to_string());
+        .map(|f| format!("{}:{}", f.name, session.name))
+        .unwrap_or_else(|| format!("__UNCATEGORIZED__:{}", session.name));
     Ok(SessionArgs {
-        title: format!("{}:{}", folder_name, session.name),
+        title,
         ssh_args: build_ssh_args(session),
     })
 }
@@ -680,7 +1045,8 @@ async fn spawn_terminal(
             .title(title)
             .inner_size(1100.0, 720.0)
             .min_inner_size(640.0, 400.0)
-            .resizable(true);
+            .resizable(true)
+            .disable_drag_drop_handler();
         builder.build().map_err(|e| e.to_string())?;
     } else if let Some(window) = app.get_webview_window(&source_label) {
         let _ = window.unminimize();
@@ -947,7 +1313,8 @@ async fn drop_tab(
         .inner_size(1100.0, 720.0)
         .min_inner_size(640.0, 400.0)
         .resizable(true)
-        .position(screen_x - 100.0, screen_y - 20.0);
+        .position(screen_x - 100.0, screen_y - 20.0)
+        .disable_drag_drop_handler();
     builder.build().map_err(|e| e.to_string())?;
     Ok(true)
 }
@@ -958,11 +1325,20 @@ async fn drop_tab(
 fn pty_spawn(
     terminal_id: String,
     ssh_args: Vec<String>,
+    session_id: Option<String>,
     rows: u16,
     cols: u16,
     app: AppHandle,
     state: State<AppState>,
 ) -> Result<(), String> {
+    // Empty ssh_args = password-auth session: drive the connection in-process
+    // via russh instead of shelling out to ssh.exe (which can't accept the
+    // password non-interactively on Windows).
+    if ssh_args.is_empty() {
+        let sid = session_id.ok_or_else(|| "session_id required for password auth spawn".to_string())?;
+        return spawn_russh_shell(terminal_id, sid, rows, cols, app, state);
+    }
+
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
@@ -1006,7 +1382,7 @@ fn pty_spawn(
         .take_writer()
         .map_err(|e| format!("take writer failed: {}", e))?;
 
-    let instance = Arc::new(PtyInstance {
+    let instance = Arc::new(PtyInstance::Cli {
         master: Mutex::new(pair.master),
         writer: Mutex::new(writer),
         child: Mutex::new(child),
@@ -1042,14 +1418,122 @@ fn pty_spawn(
     Ok(())
 }
 
+/// In-process SSH shell via russh (used when session uses password auth, since
+/// the system `ssh` CLI can't be fed a password non-interactively on Windows).
+/// A tokio worker owns the channel and serves write/resize/kill requests over
+/// an mpsc; reads are pumped to "pty-output" events as they arrive.
+fn spawn_russh_shell(
+    terminal_id: String,
+    session_id: String,
+    rows: u16,
+    cols: u16,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let data = load_data()?;
+    let session = data.sessions.iter().find(|s| s.id == session_id).cloned()
+        .ok_or("Session not found")?;
+
+    fix_key_permissions_if_needed(&session)?;
+
+    let target_pwd = if session.auth_method == "password" {
+        resolve_password(&state, &session.id, false, session.store_password)
+    } else { None };
+    let jump_pwd = match &session.jump_host {
+        Some(j) if j.auth_method == "password" => resolve_password(&state, &session.id, true, j.store_password),
+        _ => None,
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<RusshShellCmd>();
+    let instance = Arc::new(PtyInstance::Russh { tx });
+    state.ptys.lock().unwrap().insert(terminal_id.clone(), instance);
+
+    let app_clone = app.clone();
+    let tid = terminal_id.clone();
+    state.runtime.spawn(async move {
+        let config = Arc::new(russh::client::Config::default());
+        let (jump_handle, target_handle) = match connect_handles(&session, config, target_pwd, jump_pwd).await {
+            Ok(h) => h,
+            Err(e) => {
+                let msg = format!("\r\n\x1b[1;31mConnection failed: {}\x1b[0m\r\n", e);
+                let _ = app_clone.emit("pty-output", PtyOutputPayload { terminal_id: tid.clone(), data: msg.into_bytes() });
+                let _ = app_clone.emit("pty-exit", PtyExitPayload { terminal_id: tid });
+                return;
+            }
+        };
+        let _keep_jump = jump_handle;
+
+        let channel = match target_handle.channel_open_session().await {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = format!("\r\n\x1b[1;31mShell channel failed: {}\x1b[0m\r\n", e);
+                let _ = app_clone.emit("pty-output", PtyOutputPayload { terminal_id: tid.clone(), data: msg.into_bytes() });
+                let _ = app_clone.emit("pty-exit", PtyExitPayload { terminal_id: tid });
+                return;
+            }
+        };
+        if let Err(e) = channel.request_pty(true, "xterm-256color", cols as u32, rows as u32, 0, 0, &[]).await {
+            let msg = format!("\r\n\x1b[1;31mrequest_pty failed: {}\x1b[0m\r\n", e);
+            let _ = app_clone.emit("pty-output", PtyOutputPayload { terminal_id: tid.clone(), data: msg.into_bytes() });
+            let _ = app_clone.emit("pty-exit", PtyExitPayload { terminal_id: tid });
+            return;
+        }
+        if let Err(e) = channel.request_shell(true).await {
+            let msg = format!("\r\n\x1b[1;31mrequest_shell failed: {}\x1b[0m\r\n", e);
+            let _ = app_clone.emit("pty-output", PtyOutputPayload { terminal_id: tid.clone(), data: msg.into_bytes() });
+            let _ = app_clone.emit("pty-exit", PtyExitPayload { terminal_id: tid });
+            return;
+        }
+
+        let mut channel = channel;
+        loop {
+            tokio::select! {
+                msg = channel.wait() => {
+                    match msg {
+                        Some(russh::ChannelMsg::Data { data }) => {
+                            let _ = app_clone.emit("pty-output", PtyOutputPayload { terminal_id: tid.clone(), data: data.to_vec() });
+                        }
+                        Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
+                            let _ = app_clone.emit("pty-output", PtyOutputPayload { terminal_id: tid.clone(), data: data.to_vec() });
+                        }
+                        Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) => break,
+                        Some(_) => continue,
+                        None => break,
+                    }
+                }
+                cmd = rx.recv() => {
+                    match cmd {
+                        Some(RusshShellCmd::Write(buf)) => {
+                            let _ = channel.data(&buf[..]).await;
+                        }
+                        Some(RusshShellCmd::Resize { rows, cols }) => {
+                            let _ = channel.window_change(cols as u32, rows as u32, 0, 0).await;
+                        }
+                        Some(RusshShellCmd::Kill) | None => break,
+                    }
+                }
+            }
+        }
+        let _ = app_clone.emit("pty-exit", PtyExitPayload { terminal_id: tid });
+    });
+    Ok(())
+}
+
 #[tauri::command]
 fn pty_write(terminal_id: String, data: Vec<u8>, state: State<AppState>) -> Result<(), String> {
     let ptys = state.ptys.lock().unwrap();
     let pty = ptys.get(&terminal_id).ok_or("Unknown terminal")?.clone();
     drop(ptys);
-    let mut w = pty.writer.lock().unwrap();
-    w.write_all(&data).map_err(|e| e.to_string())?;
-    w.flush().map_err(|e| e.to_string())?;
+    match &*pty {
+        PtyInstance::Cli { writer, .. } => {
+            let mut w = writer.lock().unwrap();
+            w.write_all(&data).map_err(|e| e.to_string())?;
+            w.flush().map_err(|e| e.to_string())?;
+        }
+        PtyInstance::Russh { tx } => {
+            tx.send(RusshShellCmd::Write(data)).map_err(|e| e.to_string())?;
+        }
+    }
     Ok(())
 }
 
@@ -1058,11 +1542,16 @@ fn pty_resize(terminal_id: String, rows: u16, cols: u16, state: State<AppState>)
     let ptys = state.ptys.lock().unwrap();
     let pty = ptys.get(&terminal_id).ok_or("Unknown terminal")?.clone();
     drop(ptys);
-    pty.master
-        .lock()
-        .unwrap()
-        .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
-        .map_err(|e| e.to_string())?;
+    match &*pty {
+        PtyInstance::Cli { master, .. } => {
+            master.lock().unwrap()
+                .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+                .map_err(|e| e.to_string())?;
+        }
+        PtyInstance::Russh { tx } => {
+            tx.send(RusshShellCmd::Resize { rows, cols }).map_err(|e| e.to_string())?;
+        }
+    }
     Ok(())
 }
 
@@ -1070,7 +1559,10 @@ fn pty_resize(terminal_id: String, rows: u16, cols: u16, state: State<AppState>)
 fn pty_kill(terminal_id: String, state: State<AppState>) -> Result<(), String> {
     let pty = state.ptys.lock().unwrap().remove(&terminal_id);
     if let Some(pty) = pty {
-        let _ = pty.child.lock().unwrap().kill();
+        match &*pty {
+            PtyInstance::Cli { child, .. } => { let _ = child.lock().unwrap().kill(); }
+            PtyInstance::Russh { tx } => { let _ = tx.send(RusshShellCmd::Kill); }
+        }
     }
     Ok(())
 }
@@ -1085,12 +1577,16 @@ fn pty_kill(terminal_id: String, state: State<AppState>) -> Result<(), String> {
 fn get_session_home(session_id: String, state: State<AppState>) -> Result<String, String> {
     let data = load_data()?;
     let session = data.sessions.iter().find(|s| s.id == session_id).cloned().ok_or("Session not found")?;
-    fix_key_permissions(&session.key_file)?;
-    if let Some(jump) = &session.jump_host { fix_key_permissions(&jump.key_file)?; }
+    fix_key_permissions_if_needed(&session)?;
+    let target_pwd = if session.auth_method == "password" { resolve_password(&state, &session.id, false, session.store_password) } else { None };
+    let jump_pwd = match &session.jump_host {
+        Some(j) if j.auth_method == "password" => resolve_password(&state, &session.id, true, j.store_password),
+        _ => None,
+    };
     let rt = &state.runtime;
     rt.block_on(async {
         let config = Arc::new(russh::client::Config::default());
-        let (sftp, _jump, _target) = connect_sftp(&session, config).await?;
+        let (sftp, _jump, _target) = connect_sftp(&session, config, target_pwd, jump_pwd).await?;
         let home = sftp.canonicalize(".").await.map_err(|e| format!("home: {}", e))?;
         Ok::<String, String>(home)
     })
@@ -1101,13 +1597,18 @@ fn sftp_connect(session_id: String, state: State<AppState>) -> Result<String, St
     let data = load_data()?;
     let session = data.sessions.iter().find(|s| s.id == session_id).ok_or("Session not found")?.clone();
 
-    fix_key_permissions(&session.key_file)?;
-    if let Some(jump) = &session.jump_host { fix_key_permissions(&jump.key_file)?; }
+    fix_key_permissions_if_needed(&session)?;
+
+    let target_pwd = if session.auth_method == "password" { resolve_password(&state, &session.id, false, session.store_password) } else { None };
+    let jump_pwd = match &session.jump_host {
+        Some(j) if j.auth_method == "password" => resolve_password(&state, &session.id, true, j.store_password),
+        _ => None,
+    };
 
     let rt = &state.runtime;
     let result = rt.block_on(async {
         let config = Arc::new(russh::client::Config::default());
-        let (sftp, _jump, _target) = connect_sftp(&session, config).await?;
+        let (sftp, _jump, _target) = connect_sftp(&session, config, target_pwd, jump_pwd).await?;
 
         // Get home dir
         let home_dir = sftp.canonicalize(".").await
@@ -1124,6 +1625,7 @@ fn sftp_connect(session_id: String, state: State<AppState>) -> Result<String, St
                 match cmd {
                     SftpCommand::ListDir { path, reply } => { let _ = reply.send(list_dir_impl(&sftp, &path).await); }
                     SftpCommand::Upload { local_path, remote_dir, app, session_id, reply } => { let _ = reply.send(upload_impl(&sftp, &local_path, &remote_dir, &app, &session_id).await); }
+                    SftpCommand::UploadBytes { remote_dir, filename, data, app, session_id, reply } => { let _ = reply.send(upload_bytes_impl(&sftp, &remote_dir, &filename, &data, &app, &session_id).await); }
                     SftpCommand::Download { remote_path, local_path, app, session_id, reply } => { let _ = reply.send(download_impl(&sftp, &remote_path, &local_path, &app, &session_id).await); }
                     SftpCommand::Mkdir { path, reply } => { let _ = reply.send(sftp.create_dir(&path).await.map_err(|e| format!("Failed: {}", e))); }
                     SftpCommand::Delete { path, is_dir, reply } => {
@@ -1166,6 +1668,16 @@ fn sftp_upload(session_id: String, remote_dir: String, local_path: String, app: 
     let handle = connections.get(&session_id).ok_or("Not connected")?;
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
     state.runtime.block_on(handle.tx.send(SftpCommand::Upload { local_path, remote_dir, app, session_id: session_id.clone(), reply: reply_tx }))
+        .map_err(|_| "Worker disconnected".to_string())?;
+    state.runtime.block_on(reply_rx).map_err(|_| "Worker crashed".to_string())?
+}
+
+#[tauri::command]
+fn sftp_upload_bytes(session_id: String, remote_dir: String, filename: String, data: Vec<u8>, app: AppHandle, state: State<AppState>) -> Result<(), String> {
+    let connections = state.sftp_connections.lock().unwrap();
+    let handle = connections.get(&session_id).ok_or("Not connected")?;
+    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+    state.runtime.block_on(handle.tx.send(SftpCommand::UploadBytes { remote_dir, filename, data, app, session_id: session_id.clone(), reply: reply_tx }))
         .map_err(|_| "Worker disconnected".to_string())?;
     state.runtime.block_on(reply_rx).map_err(|_| "Worker crashed".to_string())?
 }
@@ -1216,6 +1728,7 @@ fn main() {
             sftp_connections: Mutex::new(HashMap::new()),
             ptys: Mutex::new(HashMap::new()),
             pending_tabs: Mutex::new(HashMap::new()),
+            password_cache: Mutex::new(HashMap::new()),
             runtime,
         })
         .invoke_handler(tauri::generate_handler![
@@ -1223,7 +1736,7 @@ fn main() {
             create_folder, update_folder, delete_folder,
             reorder_sessions, reorder_folders, open_ssh,
             sftp_connect, sftp_disconnect, sftp_list_dir,
-            sftp_upload, sftp_download, sftp_mkdir, sftp_delete,
+            sftp_upload, sftp_upload_bytes, sftp_download, sftp_mkdir, sftp_delete,
             get_session_home,
             pty_spawn, pty_write, pty_resize, pty_kill, pty_take_pending, drop_tab,
             spawn_terminal, get_ssh_args_for_session,
@@ -1232,7 +1745,8 @@ fn main() {
             get_log_dir, set_log_dir, get_ssh_verbose, set_ssh_verbose,
             clear_logs, open_path_in_os,
             get_data_file_path, set_data_file_path,
-            export_sessions_to, import_sessions_from
+            export_sessions_to, import_sessions_from,
+            check_session_password_needs, set_session_password, clear_session_password
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

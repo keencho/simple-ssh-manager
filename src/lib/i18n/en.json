@@ -1,0 +1,362 @@
+{
+  "common": {
+    "ok": "OK",
+    "cancel": "Cancel"
+  },
+  "settings": {
+    "title": "Settings",
+    "close": "Close",
+    "nav": {
+      "font": "Font",
+      "theme": "Theme",
+      "layout": "Appearance",
+      "log": "Logs",
+      "data": "Data"
+    },
+    "font": {
+      "title": "Font",
+      "subtitle": "The selection applies immediately to all open terminals. Fonts that are not installed fall back to a substitute.",
+      "optgroup": {
+        "bundled": "✓ Bundled (always available)",
+        "installed": "✓ Installed on system",
+        "missing": "⚠ Not installed"
+      },
+      "status": {
+        "bundled": "✓ Bundled — \"{name}\" (always available)",
+        "installed": "✓ Installed on system — \"{name}\"",
+        "cdnPreview": "🌐 Online preview (Google Fonts) — install for offline use",
+        "fallback": "⚠ \"{primary}\" not installed — actually rendered as: \"{actual}\"",
+        "fallbackDefault": "⚠ \"{primary}\" not installed — rendered with system default monospace"
+      },
+      "installBtn": "Official download ↗",
+      "errors": {
+        "apply": "Failed to apply font: {error}",
+        "openLink": "Failed to open link: {error}"
+      }
+    },
+    "theme": {
+      "title": "Terminal theme",
+      "subtitle": "Sorted by ranking · The selection applies immediately to all open terminals.",
+      "errors": {
+        "apply": "Failed to apply theme: {error}"
+      }
+    },
+    "layout": {
+      "title": "Appearance",
+      "subtitle": "Choose the sidebar position. You can toggle hide/show anytime with the arrow button at the top of the sidebar.",
+      "sidebarPos": {
+        "left": "Left",
+        "right": "Right"
+      },
+      "language": {
+        "title": "Language",
+        "subtitle": "Changes to language take effect immediately. Open terminals are not affected.",
+        "en": "English",
+        "ko": "한국어"
+      }
+    },
+    "log": {
+      "title": "Logs",
+      "subtitle": "Where the app activity log and (verbose mode) SSH connection debug logs are saved.",
+      "folderLabel": "Log folder",
+      "openFolder": "Open folder",
+      "changeDir": "Change path",
+      "resetDir": "Default",
+      "clearAll": "Delete all",
+      "verboseLabel": "SSH verbose debug log",
+      "verboseToggle": "Add <code>-vv</code> + <code>-E '{'logDir'}'/ssh-*.log</code> to ssh on connect",
+      "verboseHint": "Turn this on to investigate connection failures such as Permission denied or algorithm mismatch. A separate file is created per session.",
+      "dialog": {
+        "changeFolder": "Choose log folder",
+        "deleteConfirm": {
+          "title": "Delete logs",
+          "body": "Delete all *.log files in the log folder.\n{path}"
+        },
+        "deleted": "Deleted {count} log file(s)."
+      },
+      "errors": {
+        "openFolder": "Failed to open folder: {error}",
+        "changeDir": "Failed to change path: {error}",
+        "resetDir": "Failed to reset to default: {error}",
+        "clear": "Failed to delete logs: {error}",
+        "verbose": "Failed to update setting: {error}"
+      }
+    },
+    "data": {
+      "title": "Data",
+      "subtitle": "Sessions and folder info are managed in a single JSON file. You can back it up, transfer it to another machine, or change its path.",
+      "currentFile": "Current data file",
+      "openFolder": "Open folder",
+      "changeFile": "Use a different file",
+      "resetFile": "Default",
+      "changeHint": "If you point to a different file, all subsequent saves and loads use that file. A file with an invalid JSON shape will not be accepted.",
+      "exportImport": "Export / Import",
+      "export": "Export (JSON)",
+      "import": "Import (JSON)",
+      "exportImportHint": "Export saves a copy of the current data. Import <strong>replaces</strong> all current sessions and folders.",
+      "dialog": {
+        "changeFile": "Choose data JSON file",
+        "importFile": "Choose JSON file to import",
+        "exported": "Export complete\n{path}",
+        "importConfirm": {
+          "title": "Import",
+          "body": "All current sessions and folders will be replaced. Continue?"
+        },
+        "imported": "Import complete. The sidebar has been refreshed."
+      },
+      "errors": {
+        "openFolder": "Failed to open folder: {error}",
+        "changeFile": "Failed to change path: {error}",
+        "resetFile": "Failed to reset to default: {error}",
+        "export": "Export failed: {error}",
+        "import": "Import failed: {error}"
+      }
+    }
+  },
+  "modal": {
+    "session": {
+      "title": {
+        "add": "Add session",
+        "edit": "Edit session"
+      },
+      "fields": {
+        "name": "Name",
+        "namePlaceholder": "Server name",
+        "host": "Host",
+        "hostPlaceholder": "IP or hostname",
+        "port": "Port",
+        "user": "User",
+        "userPlaceholder": "ec2-user",
+        "keyfile": "Key File",
+        "keyfilePlaceholder": "Path to SSH key",
+        "browse": "Browse",
+        "folder": "Folder",
+        "folderUncategorized": "(Uncategorized)"
+      },
+      "jump": {
+        "toggle": "Use Jump Host",
+        "host": "Jump Host",
+        "hostPlaceholder": "Bastion IP",
+        "user": "Jump User",
+        "userPlaceholder": "ec2-user",
+        "keyfile": "Jump Key File",
+        "keyfilePlaceholder": "Path to bastion key"
+      },
+      "auth": {
+        "label": "Authentication",
+        "key": "Key file",
+        "password": "Password",
+        "passwordPlaceholder": "Enter password",
+        "storePassword": "Save password securely",
+        "storePasswordHint": "Stored in OS keychain. Uncheck to enter password each time.",
+        "show": "Show password",
+        "hide": "Hide password"
+      },
+      "actions": {
+        "save": "Save"
+      },
+      "errors": {
+        "required": "Name, Host, and User are required.",
+        "passwordRequired": "Password is required.",
+        "save": "Save failed: {error}"
+      }
+    },
+    "passwordPrompt": {
+      "title": "Password required",
+      "subtitle": "{user}@{host}",
+      "subtitleJump": "Jump host: {user}@{host}",
+      "placeholder": "Enter password",
+      "ok": "Connect",
+      "cancel": "Cancel"
+    }
+  },
+  "sidebar": {
+    "search": {
+      "placeholder": "Search..."
+    },
+    "stats": "{folders} folder(s) / {sessions} session(s)",
+    "uncategorized": "Uncategorized",
+    "empty": {
+      "noSessions": "Add a session",
+      "noResults": "No results"
+    },
+    "folder": {
+      "addSession": "Add session",
+      "edit": "Edit folder"
+    },
+    "actions": {
+      "addSession": "Session",
+      "addFolder": "Folder",
+      "newWindow": "New window",
+      "newWindowTitle": "Open in new window by default",
+      "settings": "Settings",
+      "refresh": "Refresh",
+      "hide": "Hide sidebar",
+      "show": "Show sidebar"
+    },
+    "menu": {
+      "session": {
+        "connect": "Connect",
+        "connectNewWindow": "Open in new window",
+        "openSftp": "Open SFTP",
+        "edit": "Edit",
+        "duplicate": "Duplicate",
+        "delete": "Delete"
+      },
+      "folder": {
+        "addSession": "Add session",
+        "edit": "Edit folder",
+        "delete": "Delete folder"
+      }
+    },
+    "errors": {
+      "loadData": "Failed to load data: {error}",
+      "connect": "Connection failed: {error}",
+      "deleteSession": "Delete failed: {error}",
+      "createFolder": "Failed to create folder: {error}",
+      "deleteFolder": "Failed to delete folder: {error}",
+      "duplicate": "Copy failed: {error}",
+      "reorder": "Reorder failed: {error}"
+    },
+    "confirm": {
+      "deleteSession": {
+        "title": "Delete session",
+        "body": "Delete \"{name}\"?"
+      },
+      "deleteFolder": {
+        "title": "Delete folder",
+        "body": "Delete folder \"{name}\"?\n(Sessions will be moved to Uncategorized)"
+      }
+    },
+    "prompt": {
+      "newFolder": "Folder name:",
+      "renameFolder": "Rename folder (leave blank to delete):"
+    }
+  },
+  "welcome": {
+    "title": "Connect to a server",
+    "body": "<b>Double-click</b> a session in the sidebar to connect, or click <b>+ Session</b> on the lower-left to add a new server."
+  },
+  "sftp": {
+    "connecting": "Connecting...",
+    "connectFailed": "Connection failed: {error}",
+    "actions": {
+      "download": "Download",
+      "upload": "Upload",
+      "mkdir": "Folder",
+      "sortByTitle": "Sort",
+      "refresh": "Refresh"
+    },
+    "sortOptions": {
+      "type": "By folder",
+      "name": "By name",
+      "modified": "Recently modified",
+      "modifiedAsc": "Oldest first",
+      "size": "By size"
+    },
+    "dropZone": "Drag files here to upload",
+    "dialog": {
+      "saveTo": "Choose destination folder"
+    },
+    "prompt": {
+      "folderName": "Folder name:",
+      "goto": "Go to path:"
+    },
+    "breadcrumb": {
+      "loading": "Loading...",
+      "empty": "No subfolders",
+      "loadFailed": "Load failed",
+      "gotoTitle": "Type path"
+    },
+    "file": {
+      "downloadTitle": "Download",
+      "deleteTitle": "Delete"
+    },
+    "empty": "Empty directory",
+    "confirm": {
+      "delete": {
+        "title": "Delete",
+        "body": "Delete?\n{path}"
+      }
+    },
+    "errors": {
+      "loadDir": "Failed to load directory: {error}",
+      "download": "Download failed: {error}",
+      "downloadName": "Download failed: {name} - {error}",
+      "upload": "Upload failed: {error}",
+      "createFolder": "Failed to create folder: {error}",
+      "delete": "Delete failed: {error}"
+    }
+  },
+  "themes": {
+    "groups": {
+      "essentials": "Modern essentials",
+      "classic": "Classic · Muted",
+      "blue": "Cool blue",
+      "impact": "Impact · Retro",
+      "mac": "Mac classics"
+    },
+    "blurbs": {
+      "one-dark-pro": "VSCode #1 install · Atom-original dark",
+      "dracula": "Pastel neon · purple icon",
+      "github-dark": "Near pure black · modern · enterprise",
+      "tokyo-night": "Deep indigo · neon accents",
+      "catppuccin-mocha": "Pastel · 2024–25 community rising",
+      "gruvbox-dark": "Warm neutral black · retro earthy",
+      "solarized-dark": "Ethan Schoonover · most-ported classic",
+      "nord": "Arctic blue-grey · synonymous with calm",
+      "monokai-pro": "Warm grey · high contrast · classic",
+      "kanagawa": "Hokusai ink tones · mature painterly",
+      "night-owl": "Sarah Drasner · accessibility-tuned navy",
+      "ayu-dark": "Black + teal · sharp and minimal",
+      "palenight": "Material indigo · elegant night",
+      "oceanic-next": "Deep teal · marine classic (base16)",
+      "material-darker": "Near pure black · Material palette",
+      "rose-pine-moon": "Soho mood · muted mauve",
+      "synthwave-84": "80s retro neon · vibe",
+      "cobalt2": "Wes Bos · deep cobalt blue",
+      "shades-of-purple": "Bold royal purple · punchy signature",
+      "homebrew": "macOS Terminal default · hacker green",
+      "pro-macos": "macOS Terminal.app default · pure black"
+    }
+  },
+  "terminal": {
+    "pane": {
+      "zoom": "Toggle fullscreen",
+      "close": "Close pane"
+    },
+    "tab": {
+      "close": "Close",
+      "pullOutHint": "Pull out as new tab"
+    },
+    "errors": {
+      "sessionEnded": "[Session ended]",
+      "runFailed": "Failed to run session: {error}",
+      "splitFailed": "Split failed: {error}"
+    },
+    "menu": {
+      "duplicateSameWindow": "Duplicate tab in same window",
+      "duplicateNewWindow": "Duplicate tab in new window",
+      "splitVerticalSame": "Split vertical (same session)",
+      "splitVerticalOther": "Split vertical (different session...)",
+      "broadcastOff": "Broadcast OFF",
+      "broadcastOn": "Broadcast ON",
+      "closeTab": "Close tab",
+      "copy": "Copy",
+      "copyNoSelection": " (no selection)",
+      "paste": "Paste",
+      "sftpOpenWithCwd": "Open SFTP ({path})",
+      "sftpOpenHome": "Open SFTP (home)",
+      "fullscreen": "Fullscreen",
+      "fullscreenExit": "Exit fullscreen",
+      "closePane": "Close pane"
+    },
+    "picker": {
+      "title": "Split with another session",
+      "close": "Close",
+      "search": "Search...",
+      "uncategorized": "Uncategorized",
+      "empty": "No results"
+    }
+  }
+}

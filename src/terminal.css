@@ -29,6 +29,12 @@ body.terminal-window {
   flex-direction: column;
 }
 
+body.terminal-window #app {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 body.dragging-divider, body.dragging-divider * {
   cursor: col-resize !important;
   user-select: none !important;
@@ -104,7 +110,7 @@ body.dragging-divider, body.dragging-divider * {
 }
 
 #tabs.tab-bar-drop-empty::after {
-  content: "새 탭으로 빼내기";
+  content: attr(data-empty-text);
   display: flex;
   align-items: center;
   padding: 0 14px;
